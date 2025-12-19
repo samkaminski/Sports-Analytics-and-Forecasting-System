@@ -1,0 +1,18 @@
+# Database Configuration
+# This file contains database connection settings for PostgreSQL
+# 
+# USE: Loaded by data ingestion and modeling modules to connect to the database
+# HOW IT WORKS: SQLAlchemy uses these settings to establish database connections
+# FITS IN PROJECT: Central configuration point for all database operations
+
+database:
+  host: localhost
+  port: 5432
+  name: sports_betting_db
+  user: postgres
+  password: your_password_here  # Set via environment variable in production
+  
+# Connection pool settings
+pool_size: 5
+max_overflow: 10
+

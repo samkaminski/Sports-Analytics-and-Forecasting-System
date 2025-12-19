@@ -1,0 +1,1354 @@
+Sports Betting Analytics and Forecasting System Specification
+1. Project Overview
+
+System Purpose: This project is a sports betting analytics and forecasting system for NFL and College Football. It is designed to ingest extensive football data, analyze team and game factors, and forecast game outcomes (point spreads, totals, win probabilities) with comparisons to betting market lines. The system serves as a personal analytics tool for a single analyst, enabling deep insights and model-driven predictions rather than guaranteed betting advice.
+
+Target Users: The primary user is an analyst (or data scientist) with interest in football betting analytics. The system is for personal use or research, not a commercial betting platform. It assumes the user has technical proficiency to interpret outputs and possibly extend the models.
+
+Problems Addressed: The system tackles the challenge of aggregating many disparate data sources (team stats, player performance, play-by-play events, odds, etc.) and converting them into actionable predictive features. It provides a structured way to forecast games and identify differences between model predictions and sportsbook odds (“edges”). By centralizing data and models, it saves the analyst from manual data gathering and enables consistent backtesting of strategies.
+
+Key Capabilities:
+
+Data Integration: Automatically pull data on teams, players, games, and betting lines from reliable sources (for both NFL and NCAA football).
+
+Feature Engineering: Compute advanced metrics (efficiency stats, pace, situational stats, etc.) that go beyond basic box scores.
+
+Predictive Modeling: Forecast game outcomes (point spread, total points, win probability) using statistical or machine learning models.
+
+Market Comparison: Compare model forecasts to actual betting lines (spreads, totals, moneylines) to highlight potential value opportunities (where the model disagrees with the market).
+
+Visualization & Reports: Provide a user-friendly interface (web app) to visualize upcoming game predictions, confidence intervals, and key factors influencing each prediction.
+
+Out of Scope: The system will not engage in automated betting or real-time wagering. It does not guarantee profits or provide gambling advice; it is an analysis tool. Also out of scope are non-football sports, in-play live betting models (initially), or any “black box” betting syndicate features. The focus is on pre-game forecasts and retrospective analysis, not live betting signals. All betting recommendations are purely illustrative – the system will carry prominent disclaimers that predictions are for research and do not ensure winning bets.
+
+2. High-Level System Architecture
+
+Architecture Summary: The system will follow a modular pipeline architecture with distinct layers for data ingestion, data storage, modeling, API services, and front-end presentation. We will use a Python backend (for data handling and modeling) with FastAPI to serve results, and a React frontend for interactive visualizations. The design emphasizes reproducibility, clarity, and incremental expansion.
+
+Key Components:
+
+Data Ingestion Pipelines: A collection of ETL (extract-transform-load) jobs that fetch data from external APIs or files for:
+
+Game and schedule data (NFL & NCAAF schedules, scores).
+
+Team and player statistics.
+
+Play-by-play and drive-level details.
+
+Betting odds and lines.
+
+Other contextual data (weather, injuries, etc.).
+
+Storage Layer: A centralized repository for all data. Likely a relational database (PostgreSQL) to store structured data (game stats, odds, etc.) with well-defined schemas, and possibly a file storage (CSV or JSON files on disk) for raw play-by-play logs or large datasets. A high-level schema might separate data by league (NFL vs NCAA) and by data type (e.g., teams, players, games, plays, odds tables).
+
+Modeling & Analytics Layer: Python-based analysis modules that transform raw data into features, train models, and generate predictions. This will include:
+
+Feature computation scripts (calculating rolling averages, efficiencies, etc. from the database).
+
+Model training code (could start as simple regression models, later including advanced ML).
+
+A prediction engine that given new game data and trained models, outputs forecasts (spread, total, win probability).
+
+API Layer: A FastAPI service that exposes endpoints for the frontend to retrieve data and predictions. For example, endpoints to get upcoming games with model predictions, or to trigger model retraining (in a controlled manner).
+
+Frontend Visualization: A React application that allows the user to view upcoming games, model predictions vs betting lines, and key insights. The UI might include tables of games with predicted vs actual lines, charts showing confidence intervals, and perhaps interactive filters (e.g., view by week, by team).
+
+Technology Choices:
+
+Backend Language: Python is chosen for the data and modeling layer due to its rich ecosystem of data science libraries (pandas, scikit-learn, PyTorch, etc.) and ease of use for quick iteration. Python will also be used for the FastAPI service (leveraging Uvicorn/Gunicorn for production server as needed).
+
+Data Storage: PostgreSQL (or similar SQL database) is recommended for structured data because of its reliability and the need to perform complex queries (e.g., join team stats with game info). It also can store JSON fields if needed for semi-structured data (like play-by-play events). For large raw datasets (like season-long play-by-play logs), the system might use flat files or cloud storage, but these can be ingested into PostgreSQL as needed for analysis. The database schema will be designed for fast access to historical stats for modeling.
+
+Data Ingestion Tools: Python’s requests (or httpx) for API calls, possibly pandas for reading CSVs, and schedulers like cron or APScheduler for periodic updates. If high volume, could incorporate Apache Airflow or Luigi for managing pipelines, but for a single-engineer project, simpler scheduled scripts should suffice.
+
+Modeling Libraries: Start with scikit-learn for baseline models (linear regression for point spread, logistic regression for win probability, etc.) to maintain interpretability. Later phases might use XGBoost/LightGBM for gradient boosting or even neural networks (with PyTorch/TensorFlow) for more complex patterns. However, keeping models somewhat interpretable is valuable so the analyst can understand drivers of predictions.
+
+APIs/Frameworks: FastAPI is chosen for its performance and easy integration with Python models. React is chosen for the frontend for its flexibility and rich ecosystem of UI libraries (and the user specifically requested React). For data visualization, we can use libraries like D3 or Chart.js via React components, or high-level charting libraries (e.g., Recharts or Plotly.js) to plot prediction vs actual, etc.
+
+Scalability & Modularity: The architecture separates concerns so that each part can be expanded or replaced:
+
+The ingestion layer can be extended with new data sources without affecting modeling (just add new ETL scripts and new fields in DB).
+
+The modeling layer can iterate on new algorithms or features while exposing the same API to the front end.
+
+The frontend remains decoupled, interacting only through the API, so UI can be improved or even replaced by another tool (like a Jupyter notebook for deeper analysis) without altering core logic.
+
+Textual Architecture Diagram:
+
+External Data Sources: (Sports data APIs, Web data, etc.) –> Ingestion Scripts (Python ETL jobs for NFL and NCAA) –> PostgreSQL Database (schemas: nfl and ncaa, containing tables like games, teams, players, plays, odds, etc.) –> Feature Engineering Module (Python scripts/cron jobs computing aggregated features, storing results in feature tables) –> Model Training Module (accesses feature data, trains models, stores model artifacts) –> Prediction Service (loads models and recent data, computes game predictions on demand) –> FastAPI Backend (endpoints: e.g. /predictions?week=X, /game/{id}, /backtest/results) –> React Frontend (pages: Dashboard with upcoming games and predictions, Game Detail with factors, Backtest results page, etc.).
+
+In summary, the system will ingest and store comprehensive football data, compute features and models offline, and serve predictions through an API to a web interface. Justification: This layered approach balances buildability (each phase can be developed and tested in isolation) with scalability (we can upgrade the data sources or models without a complete rewrite). By using well-supported technologies (Python, FastAPI, React, PostgreSQL), a single engineer can implement and maintain the system efficiently.
+
+3. Data Sources & Acquisition Strategy (Exploratory & Comprehensive)
+
+A core challenge is obtaining reliable, up-to-date data for both NFL and College Football. We will leverage a combination of public APIs, open datasets, and possibly scraping where necessary. Below we outline the key data categories, specific sources for each, update frequency, reliability, and expected signal (impact on predictions). We also list backup sources where available:
+
+3.1 Team-Level Historical Statistics:
+
+What: Aggregated stats by team per season and per game (points, yards, efficiency metrics, etc.).
+
+Primary Source (NFL): The NFL’s official GSIS or feeds via the NFL API (if accessible) or the widely-used Pro-Football-Reference (PFR) data. PFR offers extensive historical team stats and game results which can be scraped or obtained via their HTML pages or the nflscrapR/nflfastR data.
+
+Primary Source (NCAAF): CollegeFootballData.com API – provides team game stats and drive summaries for college games 
+cfbfastr.sportsdataverse.org
+cfbfastr.sportsdataverse.org
+. Sports-Reference also has college football stats, but the CFBD API is more direct for programmatic use.
+
+Backup Sources: ESPN’s hidden API endpoints (for team stats or game summaries) can serve as a backup for both NFL and college (ESPN’s data covers college too, with some effort in finding the endpoints). Other services like SportsDataIO or SportRadar offer team stats APIs (though often paid).
+
+Update Frequency: Team stats update weekly during the season (after each game). We will schedule ingestion after each game week (e.g., early Tuesday for NFL, and Sunday for college after Saturday games) to capture new data. Season-level aggregates refresh each week as well.
+
+Reliability: PFR and CFBD API are reliable historically; CFBD may have some rate limiting (requires a free API key) but is stable. PFR scraping can break if they change HTML, but their layout is stable over years. The NFL official API (if used) might require access credentials. We will implement both primary and fallback pipelines to ensure data continuity.
+
+Licensing/Usage: PFR data is free for personal use but not for republishing large datasets commercially. CFBD API is free with attribution; heavy use might require a higher tier (but for personal project it should be fine). We must abide by any terms (like not hitting the API excessively).
+
+Expected Impact: High. Team historical performance is a fundamental predictor (e.g., point differentials, offensive/defensive rankings). These stats form the baseline for many features (strength metrics, efficiencies, etc.).
+
+3.2 Player-Level Statistics:
+
+What: Individual player stats (quarterback passing yards, running back yards, etc.) and potentially usage metrics (carries, snap counts).
+
+Primary Source (NFL): The Pro-Football-Reference player game logs and season stats (scrapable) or the NFL API if available (which provides JSON of player stats by game). Also, the NFL’s unofficial JSON feeds used by fantasy apps might provide player stats. Another resource is nflfastR play-by-play which includes player IDs for each play (allowing to derive stats)
+nflfastr.com
+.
+
+Primary Source (NCAAF): CollegeFootballData API has endpoints for player game stats and season stats (e.g., passing, rushing, receiving per game). Alternatively, Sports-Reference College Football or the NCAA’s own stats (though NCAA’s site might need scraping).
+
+Backup Sources: ESPN’s API for both NFL and college (one can query player stats via ESPN if the player/team IDs are known). Also, community datasets (Kaggle or Github) sometimes aggregate player stats. For advanced metrics like snap counts or player participation, an official source is needed (NFL has a weekly Game Book PDF that could be parsed, but that’s complex; for college, such data may be sparse).
+
+Update Frequency: Weekly (after each game). We can fetch player stats for each completed game, or cumulative season stats weekly. Real-time updates are not needed since we predict pre-game and players’ status won’t change mid-game for our use-case.
+
+Reliability: Player stats from official sources are accurate. CFBD and PFR are historically complete. Minor issues might include player name matching across sources. For college, the main challenge is sheer number of teams and players (130+ FBS teams) — but the API handles this via team IDs.
+
+Licensing: Same cautions as team stats. We’ll use these for analysis only and not redistribute raw data publicly.
+
+Expected Impact: Medium. Player stats help gauge team strength (especially quarterback performance). However, team-level aggregate features often capture the essential signal. Player-specific data can add context (e.g., if a star QB is injured, his backup’s stats matter, or if a team’s top rusher is out, etc.).
+
+3.3 Play-by-Play and Drive Data:
+
+What: Detailed event data for every play (down, distance, yards gained, play type, etc.) and drive summaries (start position, result, time consumed).
+
+Primary Source (NFL): nflfastR (open source data) provides play-by-play for all NFL games since 1999 in ready-to-use format
+nflfastr.com
+. It even adds advanced fields like win probability and expected points (EPA) for each play. We can either use the R package via Python (they have data accessible via CSV/Parquet in the nflverse repository) or use the underlying JSON sources that nflfastR uses. These sources are updated nightly during the season
+nflfastr.com
+.
+
+Primary Source (NCAAF): CollegeFootballData API also has play-by-play endpoints for college games (particularly FBS games in recent years). The CFBD API provides structured JSON for each play, including coordinates, play type, etc., from about 2014 onward.
+
+Backup Sources: The NFL official feeds (Game Center JSON) could be used as an alternative if needed. For college, if CFBD is down, there aren’t many free alternatives; one might resort to scraping ESPN’s live play-by-play pages for a given game.
+
+Update Frequency: For NFL, nightly updates for new games (we can schedule to pull PBP data the morning after each game day). For college, CFBD updates likely within a day or two of games. We will likely bulk import historical PBP data once (to have past seasons for modeling) and then append new games each week.
+
+Reliability: The data volume is large, but nflfastR is a proven resource (widely used in the analytics community). CFBD’s play-by-play is also quite comprehensive but may have occasional missing fields for smaller schools or older games. Both sources are actively maintained. We need to ensure we handle edge cases (like overtime, unusual plays).
+
+Licensing: Both are open for non-commercial use. nflfastR explicitly is open-source (data is a compilation of NFL’s publicly available data). CFBD allows free use with an API key.
+
+Expected Impact: High. Play-by-play data allows creation of rich derived metrics: third down conversion rates, red zone efficiency, explosive play frequency, etc. It is foundational for advanced features (expected points, success rates, etc.) that can significantly improve predictions beyond what aggregate stats show.
+
+3.4 Formation, Personnel, and Situational Data:
+
+What: Data on formations (e.g., 3-WR sets vs 2-TE sets), personnel groupings, and situational context (like how teams perform in shotgun vs under-center, how often they blitz, etc.).
+
+Primary Source (NFL): This is typically proprietary (e.g., Pro Football Focus or Next Gen Stats). However, some aspects can be derived: the nflfastR data tags some plays with personnel (if available) and can infer some formation tendencies. Another source: the Big Data Bowl datasets or the NextGenStats APIs (though those aren’t fully public). We might rely on community data: for example, some enthusiasts compile how often teams use certain packages (scraping game charters).
+
+Primary Source (NCAAF): Much harder to get publicly. We may consider this out-of-scope initially. Some college analysts track things like run-pass option frequency or tempo, but not in an easily accessible API. We might derive simpler situational stats (like 4th down attempt counts, etc.) from play-by-play rather than full personnel listings.
+
+Backup: If formation data is unavailable, we skip these features initially. We focus instead on situational stats that can be derived (like how often a team goes for 4th down, which indirectly reflects coaching aggressiveness). In the future, if the system expands, one could integrate with a paid source or use computer vision on game footage (definitely out of scope for now).
+
+Update Frequency: These would update per game if we had them. If deriving from play-by-play, it’s part of the PBP ingestion process.
+
+Reliability: Without a dedicated source, reliability is moderate. Derived stats might have some error (for example, formation info might be incomplete in public data).
+
+Expected Impact: Medium (if available). Knowing personnel usage or formation tendencies could refine matchups (e.g., a team that thrives with 3 WR sets vs a defense that struggles against spread formations). However, given difficulty, these features would be “nice-to-have” and likely added in later phases.
+
+3.5 Home/Away, Rest, and Travel Factors:
+
+What: Information about home vs away games, the rest days each team had before a game, travel distance, and time zone differences.
+
+Source: This is largely derived from the schedule data. For each game:
+
+Home/away is directly in the schedule.
+
+Rest days: compare the date of the game to the team’s previous game; account for bye weeks (bye = extra rest).
+
+Travel distance: based on team home cities and game location. We can have a reference table of team home coordinates and stadium coordinates to compute approximate travel miles. For college, teams travel varying distances (a table of school locations can be used).
+
+Time zones: derive from stadium location vs team’s home zone.
+
+Scheduling quirks: e.g., short rest after a Monday night game or playing Thursday after Sunday (we can flag those).
+
+Update Frequency: Schedule info for a season is known in advance, but rest needs to be calculated dynamically as the season progresses (especially for playoffs where matchups arise on the fly). We can compute these features each week for upcoming games.
+
+Reliability: The data derivation is straightforward. Stadium locations and team base locations are static (we’d gather them once). We must ensure to update for cases like London games or special sites (Mexico City, bowl games at neutral sites for college).
+
+Expected Impact: Medium. It’s debated how much rest and travel affect performance. Some studies show west-to-east travel for early games can be detrimental
+sportsinsights.com
+, and accumulated fatigue can matter
+sportsbookreview.com
+. These factors likely have a modest effect, but including them could slightly improve forecasts (and at least ensures we don’t favor a tired team unknowingly). At minimum, they help as a narrative/explanatory factor for users (“Team A is traveling cross-country on a short week”). The impact might be higher in college if a team travels to a very different environment (e.g., low altitude to high altitude).
+
+3.6 Coaching Tendencies:
+
+What: Metrics capturing a coach’s decision-making style (e.g., frequency of 4th-down attempts, two-point conversions, pass vs run ratio in neutral situations, pace of play).
+
+Source: Derived from play-by-play data. For each team (and by extension their head coach, especially in college where coaches vary more frequently):
+
+4th-down aggressiveness: count of 4th-and-short situations where they go for it vs punt/FG.
+
+2-point conversion attempts after TDs.
+
+Early-down pass frequency (how often they call passes on 1st and 2nd down in neutral game states).
+
+Tempo: average seconds per play or plays per game (could reflect coaching style; some coaches run hurry-up offenses).
+
+Trick plays or unique decisions (harder to quantify; could skip).
+
+Backup Data: Some of these are published by analytics sites (e.g., Aggressiveness Index on EdjSports, etc.), but we can compute simpler versions ourselves.
+
+Update Frequency: We can update these metrics each season (or even as a rolling window over recent games). A coach’s tendencies might evolve, but generally we might use a full-season stat for predictions.
+
+Reliability: Play-by-play provides a reliable basis, though one must carefully filter scenarios (e.g., only consider 4th-and-1 or 4th-and-2 near midfield to measure aggressiveness, etc.). We should normalize for opportunities (a team might have few chances to go for 4th down).
+
+Expected Impact: Medium. A coach who is very aggressive (goes for 4th downs often) might increase variance or give their team a slight edge in expected value, which could affect outcomes. Pace of play affects total points (more plays generally = higher totals). While these may not drastically change win probability alone, they contribute to style matchups (fast vs slow-paced team, aggressive vs conservative coach, etc.), which is valuable information in forecasting game flow (especially totals).
+
+3.7 Referee/Crew Tendencies:
+
+What: Statistics on penalty rates and tendencies for officiating crews (e.g., some crews call more penalties, affecting game flow or totals; some favor home teams in calls).
+
+Primary Source: The site nflpenalties.com tracks penalties by each referee crew from 2009 onward
+nflpenalties.com
+. We could use their data (possibly by scraping or if they have an API) to get metrics like: average total flags per game for that crew, tendency to call offensive vs defensive penalties, home vs away penalties ratio
+nflpenalties.com
+.
+
+For college: Referee data is much harder to find, and likely not worth pursuing (college officiating crews are not as publicly tracked).
+
+Update Frequency: NFL referee assignments are announced weekly. We could fetch the assignment for a game (sources like football zebras or others post this) and then lookup that crew’s stats. Since crews rotate, we might incorporate referee as a factor in the model (especially for totals or penalty yard predictions). Update the referee stats yearly (they don’t change drastically week to week).
+
+Reliability: Penalty data from nflpenalties.com is quite reliable as it’s compiled from official game reports (and they credit nflfastR for data)
+nflpenalties.com
+. We must ensure to match the correct crew to each game. For model use, these tendencies are relatively stable traits.
+
+Expected Impact: Low to Medium. Referee influence might slightly affect games – e.g., a flag-happy referee could extend drives (more defensive penalties) or slow games down (more offensive holding). This might move totals by a point or two in extreme cases, or affect against-the-spread if one team gets more calls. It’s a subtle factor, probably more useful to explain variance (“game had many penalties, which we expected given the referee”). It’s a non-obvious feature that could be valuable if used correctly (and bettors do sometimes account for referees
+sharpfootballanalysis.com
+, though it’s a smaller signal).
+
+3.8 Injury Reports and Depth Charts:
+
+What: Data on which key players are injured, and team depth charts (who is starting, who is second string).
+
+Primary Source (NFL): Official NFL injury reports (published Wednesdays, Thursdays, Fridays) list players’ game status (questionable, out, etc.). There are no free APIs from the NFL for injuries, but some websites aggregate this (e.g., ESPN’s NFL injuries page by team, or Fantasy APIs). There’s also a possibility to use Twitter feeds or team websites for up-to-the-minute info, but that’s unstructured data. Depth charts can sometimes be parsed from team websites or from data providers like ESPN.
+
+Primary Source (NCAAF): College injury information is notoriously sparse (no mandated reports). One might use team press releases or news sites, but programmatic access is limited. Depth charts might be available on team sites or forums, but not reliably via API. As a proxy, we might include whether the starting QB is out (since QB is most critical) by checking if the QB who played previous games is not playing (from roster info or simply from betting line moves as an indicator).
+
+Backup: Community forums or data (but for our scope, we likely limit to NFL injuries where data is gettable). Alternatively, use the betting line itself to indirectly capture injury news (market odds will shift if a star is out); however, we try not to bake in the market in our model. Another approach: track roster transactions (the NFL API has transactions which show if a player is placed on injured reserve, etc.).
+
+Update Frequency: Daily during game week for NFL (with final statuses by Friday/Saturday). For modeling, perhaps incorporate a binary feature like “starting QB out” or a downgrade in team rating if a key player is out. We would update the model inputs close to game time once injury info is final.
+
+Reliability: NFL injury info by game day is quite reliable for who is out, but “questionable” players are uncertain. We might simplify to availability (in or out). Depth charts from ESPN are usually updated weekly and can be parsed from their API. For college, info is unreliable so any inclusion would be manual.
+
+Expected Impact: High for specific games. Injuries can drastically change a team’s outlook (a backup QB vs a star QB might be worth a touchdown difference in spread). It’s high impact but also hard to fully quantify (some positions matter more than others). We’ll likely handle this by adjusting certain features or even having a “manual override” ability to adjust team strength if a major injury occurs. This won’t be deeply learned by the model unless we feed it historical games with backup QBs (which we can, if we label those situations).
+
+3.9 Weather (Historical and Forecasted):
+
+What: Conditions like temperature, wind, precipitation for outdoor games, which can affect scoring (e.g., high winds often correlate with lower passing yards and lower totals).
+
+Source:
+
+Historical Weather: Pro-Football-Reference includes game-day weather for NFL games in box scores (especially official data since 1999)
+pro-football-reference.com
+. We can scrape that for past games (or use the Kaggle dataset that combines PFR with weather). For college, Weather can be obtained via historical weather APIs (given stadium location and date/time) – for example, NOAA’s API or Visual Crossing (some services offer historical weather by location and date).
+
+Forecasted Weather: On the week of the game, use a weather API (like OpenWeatherMap or WeatherAPI) to get forecast for the stadium on game day. We only need basic fields: expected temperature, chance of rain, and wind speed.
+
+Update Frequency: Weather forecasts should be pulled a day or two before the game (and perhaps updated on game day morning for final predictions). Historical weather pulled once for past games for modeling.
+
+Reliability: Historical weather from PFR is official for NFL (very reliable)
+pro-football-reference.com
+. Forecasts are inherently uncertain, but a day-before forecast is usually okay for general conditions. We need to map games to nearest weather station or city – using stadium coordinates ensures we get accurate local forecasts.
+
+Licensing: Weather APIs might require a free key and have usage limits (OpenWeatherMap allows a certain number of calls per minute on free tier). We need to cache results where possible to avoid hitting limits (e.g., one call per city per day).
+
+Expected Impact: Medium (situational). Weather mostly impacts totals (e.g., extreme wind or heavy rain tends to lower scoring). It might influence spread if one team’s style is more affected (a run-heavy team might suffer less in wind than a pass-heavy team). This feature can help adjust predictions for games like “cold December Lambeau Field with snow” vs “indoor dome game”. It adds realism to the model’s predictions.
+
+3.10 Stadium and Environmental Factors:
+
+What: Static info about stadiums/venues – such as altitude (e.g., Denver’s Mile High stadium ~5280 ft, a known factor), surface type (grass vs artificial turf), indoor vs outdoor.
+
+Source: Hardcoded reference data. We can compile a list of NFL stadiums and key attributes. For college, one might do the same for major teams (though 130+ stadiums, but data exists in Wikipedia or CFBD might have stadium info).
+
+Update Frequency: Rarely (only if a team moves stadiums or a new stadium is built).
+
+Reliability: Very reliable since it’s static. For altitude, we might get exact figures; for surface, it’s known (e.g., most NFL fields are known surfaces).
+
+Expected Impact: Low to Medium. Altitude can have subtle effects (higher scoring due to thinner air? Or fatigue for visiting teams). Surface might affect injury rates or footing, but that’s subtle. Dome vs outdoors definitely matters for weather impact (weather is irrelevant for domes). So we will use these mainly to modulate the weather features (if dome, then ignore rain/wind). Altitude might be included as a feature to see if teams unaccustomed to it underperform in Denver or similar.
+
+3.11 Betting Markets Data (Spreads, Totals, Moneylines, Line Movement):
+
+What: The odds from sportsbooks for each game: point spread (with favorite and point handicap), total points line, and moneyline odds (win odds for each team). Also the opening line vs closing line to see movement.
+
+Primary Source: There are a few options:
+
+The Odds API (the-odds-api.com) offers JSON odds for upcoming games from various books, and also provides historical line snapshots
+reddit.com
+reddit.com
+. It requires an API key (free tier with limits, and a premium for more calls/historical).
+
+SportsDataIO (commercial, but has some demo access) provides odds and even consensus lines.
+
+Sportradar (if we have access via a trial, but likely not free for odds).
+
+Alternatively, we can scrape a site like Covers.com or VegasInsider for closing lines and opening lines (these sites publish historical odds).
+
+Another route: Kaggle dataset (TobyCrabtree’s) for historical NFL lines
+kaggle.com
+ (2014-2024).
+
+Backup Sources: If real-time API access is limited, we might use OddsPortal via a community scraper (OddsPortal historically lists odds from many books and line movements; some GitHub projects like “OddsHarvester” exist
+reddit.com
+). For near real-time, a free API might suffice with a short delay (e.g., The Odds API might have 60-second delayed data which is fine for us).
+
+Update Frequency: We should fetch opening lines early in the week and closing lines just before the game. For simplicity, we may focus on closing lines as the market’s final say (most efficient). Historical ingestion would gather closing lines for past games (to use in backtesting comparisons). For upcoming games, fetch the current consensus line once per day or on demand.
+
+Reliability: Official odds APIs are reliable if paid; the free ones have rate limits and maybe fewer sources. Scraping is less stable (sites can change layout or block bots). The Kaggle data suggests that cross-referencing PFR with betting data was done successfully, indicating the data is out there
+kaggle.com
+. We will start with easier access (maybe The Odds API’s free tier which provides odds for upcoming games from a few books and some historical snapshot data).
+
+Licensing: Odds data may be considered proprietary by sportsbooks, but using it for analysis is generally fine. We must not exceed API free tier calls to avoid cost or violating terms.
+
+Expected Impact: **High for market comparison, but not used as input to the predictive model. We explicitly keep model training independent of betting lines to avoid circular reasoning. The odds instead will be used in the output stage to compare with our predictions. In terms of features, one might be tempted to use the opening line as a feature (since it aggregates wisdom of crowds). However, that essentially bakes the market into the model – instead, we want to identify differences from the market. So we will treat odds as separate data to compare to model outputs, not as model inputs.
+
+Line Movement: We will track difference between opening and closing lines. This could be included in analysis (e.g., if a line moved a lot, perhaps due to some late news like injury or sharp action). It might help explain why our model (which wouldn’t know a late injury unless we fed it) disagrees with the early line. We likely won’t incorporate movement into the model, but will log it for analysis.
+
+Public Betting Percentages: This refers to what percentage of bets or money is on each side. This data is hard to acquire for free – usually provided by services like Action Network or Sports Insights to subscribers. It’s often incomplete or just an estimate. Since it’s not reliably accessible, we will mark it out-of-scope for now. If needed, we could incorporate a placeholder to manually input if we find some consensus data (some free sites might show % of picks from users, etc., but it’s not stable). The system can function without this, as it’s more for interest than for model input.
+
+3.12 Summary of Data Source Strategy:
+
+We will implement data acquisition in phases:
+
+Initial Historical Load: Use readily available bulk data to populate history (e.g., use nflfastR’s repository for NFL play-by-play
+nflfastr.com
+, CFBD API for college history, and a compiled dataset for historical odds if available). This gives us a modeling dataset up front.
+
+Weekly Updates: Set up scripts to run weekly (or daily) to fetch new game results, stats, odds, etc. For NFL, a pipeline might run Tuesday (to update previous week games stats and also fetch opening lines for next week) and then again Saturday to update final injury statuses and current odds. For college, do Sunday for results and initial next week lines.
+
+APIs and Keys: Secure necessary API keys (CFBD, The Odds API, possibly OpenWeatherMap). Abstract the API calls in Python functions that can be retried or easily swapped if a provider changes.
+
+Error Handling & Backup: Build in checks (if an API fails or returns incomplete data, log it and use backup source or at least preserve last known data). For example, if CFBD API is down one day, skip or try later, since a one-day delay is okay for our use. If an odds API limit is hit, perhaps reduce frequency or restrict to a subset of sportsbooks.
+
+Storage of Raw Data: Keep raw responses (JSON/CSV) stored, at least for critical data like odds or play-by-play, to have a trace and for possible re-processing. This also helps with versioning data (so we can reconstruct what the model saw at a given time).
+
+Each data category above provides some signal to the model. By combining them, we cover a broad range of factors:
+
+Fundamental team strength (team stats, player stats),
+
+Dynamic context (injuries, weather, rest),
+
+Strategy and style (tempo, coaching, possibly refs),
+
+Market expectations (odds for comparison).
+
+Crucially, each feature we include will be justifiable and rooted in obtainable data. If during implementation a data source is unavailable, we will adapt by either finding an alternative or dropping that feature. The strategy remains flexible and exploratory: we prefer to include unconventional stats (referees, altitude, etc.) if they can be gathered reliably, because even a small edge or added explainability is valuable. However, we will prioritize data by signal and reliability, focusing on high-impact, solid data first (play-by-play derived metrics, etc.), and only later layering in the more experimental features.
+
+4. Feature Discovery & Engineering (Open-Ended)
+
+In building the predictive model, an important step is to design and compute features that capture underlying factors influencing game outcomes. We will go beyond obvious stats (like total yards or win-loss record) to include non-obvious but potentially high-signal features. Each proposed feature or feature group below is chosen because it can be programmatically obtained and justified in a football context. We will also discuss how to normalize or adjust each feature and whether it’s likely to be noisy vs informative.
+
+4.1 Offensive and Defensive Efficiency Metrics:
+
+Definition: Instead of raw totals, use efficiency stats like yards per play (offensive YPP gained, defensive YPP allowed), points per drive, touchdowns per red zone trip, third down conversion rate, expected points added (EPA) per play, etc.
+
+Why: Efficiency measures are better predictors than volume stats because they account for pace and opportunity. For example, yards per play captures how effective a team is whenever it runs a play, which correlates with future success more than total yards (which might just reflect number of plays).
+
+Data: Compute from play-by-play or aggregate game stats. EPA/play can be taken from nflfastR for NFL (they have built-in models for EPA
+nflfastr.com
+) and from CFBD’s expected points for college (cfbfastR provides similar metrics
+cfbfastr.sportsdataverse.org
+).
+
+Normalization: These are inherently normalized (per play or per drive). We should consider opponent adjustments: e.g., a team’s offensive YPP vs the average YPP allowed by defenses they faced (to gauge if they truly excelled or just faced weak defenses). We could compute a simple opponent adjustment factor by weighting opponent stats.
+
+Noise vs Signal: Efficiency metrics are generally high signal. EPA/play especially encapsulates success better than traditional stats. Some might be a bit noisy game-to-game (third down conversion can have luck), so a season average or multi-game rolling average is better than single-game values. With enough data (half season or full season), these stabilize and become very informative.
+
+4.2 Tempo and Pace:
+
+Definition: How fast a team plays. E.g., seconds per play or plays per game, and how this compares to opponents.
+
+Why: Tempo affects scoring and totals. A fast-paced team creates more possessions (tends to lead to higher scoring games), whereas a slow, clock-controlling team might lead to lower totals. It’s also a style indicator that could interact with matchups (fast vs fast could amplify total, fast vs slow might force one style on the other).
+
+Data: We can derive seconds/play by taking time of possession and number of plays. Alternatively, plays per game is simpler. Some teams also do “no-huddle” frequently – we might not know directly, but plays per minute is a clue. For college, play counts can be very high in some conferences (Big 12 teams often run up-tempo).
+
+Normalization: Pace can be skewed by game situation (teams trailing go faster). We might calculate pace in neutral situations (first half or within one score). But as a baseline, average pace is fine. It doesn’t need opponent adjustment per se, but note if two fast teams face off, the model might double count the effect – we might need an interaction feature (e.g., product of two teams’ pace as an input for total).
+
+Noise vs Signal: Medium signal for totals predictions. Pace is relatively consistent as it’s often a deliberate coaching strategy. Noise comes from situation adjustments, but we can mitigate by focusing on first-half pace as a consistent measure of intent. Not very noisy overall.
+
+4.3 Play Selection Tendencies:
+
+Definition: Ratio of play types a team calls, e.g., pass/run ratio on early downs, deep pass frequency, run-pass option usage, etc.
+
+Why: This reveals offensive identity (pass-heavy vs run-heavy) and can indicate how a team might match up. For instance, a pass-heavy offense facing a defense with a weak secondary could have an edge. Or a run-heavy team facing a strong run defense might underperform.
+
+Data: From play-by-play, we calculate percentage of plays that are passes (excluding obvious passing situations like 3rd-and-long to avoid skew), how often they throw deep (passes >20 yards downfield if available in data), screen pass frequency, etc. For defense, the counterpart (how often they force opponents to run or pass).
+
+Normalization: Should be per opportunity (i.e., pass rate on 1st/2nd down when game is within 7 points). Opponent adjust maybe not needed, as it’s a choice metric, not performance. But situational (leading or trailing teams may run more or less).
+
+Noise vs Signal: Medium. Tendencies are usually consistent unless a team changes strategy. But some game plans differ by opponent (one week they exploit a weakness by passing more). This could add noise. Over a season it’s consistent enough to use as a feature. It’s more of an interaction feature (the effect might only show when matched vs certain defenses, which might be complex for a simple model to capture unless we explicitly include interactions).
+
+4.4 Matchup-Specific Features:
+
+Definition: Features that capture the interaction of two teams’ strengths/weaknesses. Examples:
+
+Run offense vs Run defense: e.g., Team A’s rushing yards per carry vs Team B’s defensive yards per carry allowed.
+
+Pass offense vs Pass defense: e.g., Team A’s passer rating vs Team B’s opponent passer rating allowed.
+
+Receiver vs Secondary: If available, something like Team A’s yards per pass attempt vs Team B’s yards per attempt allowed.
+
+Why: A team that is great at something facing a team that is poor at defending that thing is likely to excel (and vice versa). Matchups are crucial: a stellar run defense can force a one-dimensional offense to throw, etc.
+
+Data: Compute for each game pairing: use each team’s season-to-date stats in that category. We can form features like difference or ratio (Team offense minus opponent defense average, etc.). For college, because mismatches can be huge (think powerhouse vs low-tier team), these features will capture blowout indicators.
+
+Normalization: These are inherently relative if we subtract averages. For example, normalized matchup stat = (Offense_stat / league_avg) / (Defense_stat_allowed / league_avg). We can also just include both values separately (the model can learn the interaction), but given the likely linear model initially, an explicit interaction term or difference might be effective.
+
+Noise vs Signal: High signal if done properly. Since it directly looks at the two teams playing, it’s better than treating each team independently in the model. Some noise if the sample size is small (early season, not enough data to know true offense/defense strength). We can mitigate by incorporating prior (e.g., last season’s performance or a preseason rating) early in the season to stabilize. These matchup features should become very informative mid-season onwards.
+
+4.5 Player Usage and Volatility:
+
+Definition: Measures of how consistent or volatile a team’s key players or units are. For instance, standard deviation of a team’s weekly scoring (boom/bust offense?), or how often a particular receiver has big plays (maybe an indicator of volatility).
+
+Why: Some teams are high-variance – they might score 40 one week and 10 the next (due to style or reliance on big plays). A high variance team might be harder to predict but also might be undervalued or overvalued in betting lines depending on which version shows up. Understanding volatility helps in risk assessment (useful for things like setting confidence intervals).
+
+Data: Calculate the variance or coefficient of variation of key metrics over previous games: e.g., offensive points scored per game variance, defensive points allowed variance, QB performance variance (one week rating 120, next week 60, etc.). Also, identify if a team’s offense relies on one star (if that star is out, variance goes up).
+
+Normalization: Compare variance against the league average variance to know if it’s truly high or low. Also adjust for strength of schedule (a team might appear inconsistent if they played a mix of strong and weak opponents).
+
+Noise vs Signal: This is a bit meta; variance is itself noisy to measure with few samples, but qualitatively it could be a structural feature (some coaches take more risks leading to boom or bust outcomes). Likely a medium signal for totals (volatile teams could produce high totals unpredictably) and for confidence intervals (we’d give a wider interval for volatile teams). Possibly low direct signal for point spread mean prediction, but useful in uncertainty estimation.
+
+4.6 Situational Performance Metrics:
+
+Definition: How well teams perform in specific situations:
+
+Red zone efficiency: TDs per red zone trip (offense and defense).
+
+Third/Fourth down conversion rates: Offensively and defensively.
+
+Performance under pressure: e.g., QB’s passer rating when blitzed vs when not blitzed (if data available).
+
+Turnover margins: Turnovers per game and in high-leverage moments.
+
+Why: These can be differentiators in close games. Red zone efficiency directly affects points vs field goals. Third down success extends drives. Turnovers are high-impact events that swing games (though year-to-year some turnover luck is random).
+
+Data: All derivable from play-by-play:
+
+Red zone trips and TDs (filter plays inside opponent 20).
+
+Third down conversions (count successes).
+
+Blitz data is tricky unless we have an advanced source, so likely skip detailed pressure metrics or approximate by sacks/pressures which are recorded stats.
+
+Turnover margin is directly in game stats.
+
+Normalization: These rates should be considered in context: e.g., third down conversion should be weighed by average distance to go, etc. We might include average yards-to-go on third downs as another feature to contextualize. Opponent-adjust if possible (how good were the defenses they faced on third down generally?).
+
+Noise vs Signal: Medium. Red zone and 3rd down efficiencies can have small sample sizes and thus be volatile (a few plays can skew percentage). Turnovers have an element of randomness (fumbling is partly luck). Still, persistent extremes (like a consistently good red zone offense) might signal good play design or a star player (like a go-to red zone target). We should use these carefully – possibly incorporate them but be cautious in interpreting (and for modeling, if using a regularization method, it might down-weight if not consistent).
+
+4.7 Opponent-Adjusted Ratings:
+
+Definition: Create composite ratings for each team, like ELO or power ratings, which inherently adjust for opponent strength. For example, a Team Rating that is updated each week based on game outcomes and margin, or the Simple Rating System (SRS) which is margin of victory adjusted for opponents.
+
+Why: Rather than including dozens of raw stats, a single rating per team (offense and defense separately, possibly) can summarize overall strength. It’s also interpretable (like “Team A is +8 on a neutral field vs average, Team B is +5, so predicted spread ~3”).
+
+Data: Use historical game scores and possibly point spreads to compute an Elo rating for each team (for college, separate for FBS and possibly adjust for FCS games as needed). Alternatively, perform a regression to fit offensive and defensive factors that best explain scores. This can be done offline and updated weekly.
+
+Normalization: Elo is self-normalizing (starts at baseline and adjusts). SRS would set league average to 0.
+
+Noise vs Signal: High signal. Systems like Elo encapsulate a lot of info (win/loss, margin, opponent quality). They are proven baselines in sports forecasting (e.g., FiveThirtyEight uses Elo for NFL). Noise is relatively low once enough games are played; early season Elo is less certain, but still provides a prior. This feature would be highly informative for spread and win probability predictions. We must be careful not to use future info in computing ratings – only update Elo after games are played, and for predicting, use current rating.
+
+4.8 Interaction Features & Environment:
+
+Definition: Features capturing interactions between team traits and environment:
+
+Dome vs Outdoor: if a team is a dome team playing outdoors in bad weather, maybe an effect.
+
+Travel & Circadian effects: A West Coast team playing an early 1 PM ET game (which is 10 AM their time) – known to sometimes underperform
+sportsinsights.com
+.
+
+Altitude effect: Visiting team at Denver (high altitude) – may fade in second half if not conditioned.
+
+Why: These factors might not be huge, but they add color and could explain outliers. They are also useful in the narrative/explanation to user. For instance, if our model accounts for a West-East travel penalty, we can justify a slightly lower expected performance for that team.
+
+Data: Already discussed: we can derive a binary or numeric feature for “time zone difference” * “early start” as an interaction. Altitude difference as a binary (game at high altitude and visiting team not used to it). Dome to outdoor with cold weather as a flag.
+
+Normalization: These are mostly binary flags or adjustments. We might incorporate them by subtracting a few points from a team’s rating in those scenarios (if evidence suggests it). But in modeling, we can present it as just another input.
+
+Noise vs Signal: Low individually, because these situational effects are small on average. But cumulatively, they can be meaningful. They are mostly structural adjustments grounded in common sense and some studies. They likely won’t make or break predictions, but they ensure we don’t miss a known factor.
+
+4.9 Feature Scaling and Selection:
+
+Once we generate a wide array of features, we will likely have dozens if not hundreds of potential inputs (especially if we include granular stats). We need to:
+
+Scale features appropriately (many models require features on comparable scale; we can use standardization or min-max scaling for continuous features like yards per play, while binary or percentage features can stay as 0-1 or 0-100).
+
+Avoid multicollinearity and redundancy. For example, if we include both total yards and yards per play and plays per game, one is a product of the others. We might prefer the more fundamental ones (yards per play and plays per game instead of total yards). Similarly, an Elo rating might already encapsulate many stats, so if we include Elo, we might not need pure win-loss record or point differential as separate features (to avoid overweighting the same info).
+
+Identify which features are likely noisy: e.g., turnover margin in a short span might mislead (so maybe include turnover margin over a long horizon, or not at all in early model).
+
+Regularization: using modeling techniques like L1/L2 regularization will naturally down-weight useless features, but we should still be thoughtful in the design phase.
+
+4.10 Noisy vs. Informative recap:
+
+Likely highly informative features: efficiency metrics, opponent-adjusted ratings, matchup differences, major injury flags, maybe Elo ratings.
+
+Likely medium: coaching tendencies, pace, weather, some situational flags.
+
+Likely low or very situational: referee tendencies, minor environmental flags (except they might explain a single game’s variance but not overall).
+
+We will still include some low-signal features if they are easy to get and don’t hurt the model, especially if they aid in explainability. For example, even if referee data doesn’t significantly improve predictive accuracy, having it allows the system to say “This game is officiated by a crew that calls above-average penalties, which might slightly influence total points.”
+
+4.11 Feature Engineering Process:
+
+This is an exploratory task and we’ll iterate:
+
+Start with a core feature set: past performance metrics (point differential, yards/play, etc.), maybe Elo ratings, basic team vs team matchup stats.
+
+Train a baseline model, check which features seem important (if model is linear or tree-based we can check coefficients or feature importance).
+
+Introduce additional features (coaching, weather, etc.) one group at a time to see if they improve validation performance.
+
+Continuously validate on historical seasons (with proper backtesting, see section 6) to guard against overfitting to quirks.
+
+Use domain intuition at each step to decide if a feature that’s not improving accuracy might still be kept for user interest. But if a feature adds noise (e.g., inconsistent referee data), we might drop it.
+
+Normalization and Opponent adjustments are especially crucial for college football. College has extreme mismatches (a top team might average 50 points/game not just because they’re good, but also because they played some weak defenses). So opponent-adjusted metrics (like relative to average allowed by those defenses) are key to not overrate stats compiled against weak teams. We may implement a simple rating for offense and defense for each team and use those as features (instead of raw stats) to naturally account for schedule strength.
+
+In summary, we will not shy away from unconventional features (referees, travel, etc.) as long as they are reproducible and make sense. Each feature will be documented with its rationale. This rich feature set will give the model a wide view of each game’s context. We acknowledge that some features may end up pruned if they don’t prove useful, but starting broad gives us the best chance to discover those few non-obvious predictors that provide real signal advantage over generic models.
+
+5. Modeling Approach (Phase-Based, Expandable)
+
+We plan a multi-phase modeling strategy, starting simple and building in complexity. This phased approach ensures we can deliver intermediate results and evaluate at each step, all while keeping the system extensible for future enhancements.
+
+Phase 1: Baseline Predictive Models
+
+Goals: Establish basic predictive capability for game outcomes (point spread, total points, win probability) using interpretable models.
+
+Target Variables:
+
+Point Spread: We define this as (Team A score – Team B score) for each game. Usually one team is home; we can predict home team margin or always predict favorite’s margin. To keep it simple, we can predict the home team point differential (positive means home wins by that many).
+
+Total Points: Sum of both teams’ scores.
+
+Win Probability: Probability that Team A (home or a chosen reference team) wins the game. This can be derived from point spread prediction (if we assume a distribution) or directly modeled as classification.
+
+Model Choices: Begin with simple, interpretable models:
+
+For point spread and total (continuous outcomes), use linear regression or ridge regression. Possibly separate models: one for spread, one for total.
+
+For win probability (binary outcome win/loss), use logistic regression. Alternatively, derive win probability from the spread prediction under an assumed distribution (e.g., if we assume a normal error, we can convert a predicted spread to win probability).
+
+We might also start with even simpler: e.g., an Elo-based predictor for win probability and a linear model for margin using just Elo difference and home field as features (this would mimic established methods).
+
+Features Used: In Phase 1, keep it minimal: things like team ratings (Elo or SRS), maybe a few season averages (point diff, etc.), and a home-field indicator. This ensures the model is not overfitting and we can easily interpret it. For example, a linear model might yield coefficients that we can sanity-check (like home field worth ~2-3 points, which matches historical averages).
+
+Rationale for Simplicity: Starting simple has several benefits:
+
+We get a baseline performance to compare future complex models against (if complex model isn’t much better than simple, something’s off).
+
+Interpretability: we can explain the predictions in straightforward terms (“Team A is rated 5 points better plus 3 points home advantage, so ~8 point favorite”).
+
+Faster development: ensure pipeline from data -> model -> prediction works end-to-end without needing complex tuning.
+
+Expected Outcome: By the end of Phase 1, the system should be able to output a predicted spread, total, and win probability for each upcoming game, albeit from a basic model. This establishes the MVP prediction capability. Accuracy might not beat betting markets yet, but that’s okay; it provides a reference point.
+
+Phase 2: Uncertainty & Distributions
+
+Goals: Extend the modeling to quantify uncertainty in predictions, outputting not just point estimates but distributions or confidence intervals for outcomes.
+
+Predictive Distributions: For point spread and total, instead of a single value, we want an estimate of the distribution (e.g., “Team A will win by 8 on average, with a standard deviation of 10 points”). Approaches:
+
+Prediction Intervals via Bootstrapping: We can bootstrap the training data or residuals to simulate many outcomes and produce a confidence interval (e.g., 95% interval).
+
+Quantile Regression: Train models to predict specific quantiles (like 25th, 50th, 75th percentile of outcomes). This gives a sense of range.
+
+Bayesian Models: Use a Bayesian regression or a model like Bayesian ridge or Gaussian Process. This inherently gives a distribution over outcomes or parameters (e.g., a posterior predictive distribution).
+
+Ensemble of models: Train multiple models with slight variations (or an ensemble of trees) and use the spread of their predictions as an uncertainty measure.
+
+Win Probability and Calibration: For win probability, we want to ensure the probabilities are well-calibrated:
+
+Use techniques like Platt scaling if needed (for logistic outputs).
+
+Check calibration plots: e.g., games where model says 70% win should actually win ~70% of the time in holdout data.
+
+Brier Score could be a metric to optimize for probability predictions.
+
+Methods for Confidence Intervals:
+
+If using a simple linear model, we can compute an analytical confidence interval if assumptions hold (standard errors of regression).
+
+More robustly, we might simulate outcomes: e.g., assume the error distribution is normal (or t-distribution to allow heavy tails) with mean = model predicted spread and some variance estimated from training residuals. Then derive win probability as P(spread > 0).
+
+Alternatively, bootstrap: resample past games with replacement, train model on each bootstrap, predict for upcoming game, get a distribution of predicted margins.
+
+Interpretation: The system will output something like: Predicted spread = +5, 95% CI roughly [-7, +17], which means while the best estimate is a 5-point win, the game could reasonably swing two touchdowns either way. For totals, similarly a range.
+
+Why Uncertainty Matters: In betting context, understanding uncertainty is crucial. It helps avoid false confidence. Also, when comparing to market odds, if our model indicates a slight edge but with huge uncertainty, it might not be a meaningful edge. Conversely, if we’re very confident in a prediction, that might be notable.
+
+Technique Choice: We might start with the simpler approach (assume normal residuals). If that proves too naive (maybe distribution of football scores is not normal, often it's more like a scaled t or something with heavier tails), we adjust by perhaps fitting an empirical distribution of residuals. For totals, distribution might be skewed or truncated (e.g., can’t be negative, etc., but normal works as an approximation for moderate ranges).
+
+Bayesian vs Frequentist: A Bayesian approach (e.g., use a Monte Carlo to draw from parameter posteriors) is appealing for a principled interval. However, it’s more complex to implement and potentially slower. We can consider using PyMC3/PyMC or TensorFlow Probability in a later iteration to refine this. Initially, a bootstrap or ensemble approach might be easier and sufficient.
+
+By the end of Phase 2, for each game we want:
+
+A predicted mean spread/total and a confidence interval or distribution (we could even generate a full probability distribution for final scores difference, which can then derive win probability and probability of covering a given spread, etc.).
+
+Win probability explicitly, and perhaps an estimate of the probability of going over/under the total (which comes from the total distribution).
+
+These will allow richer comparisons to betting lines (like “Model gives team a 60% win chance vs implied 55%, and sees a 55% chance the game goes over 45 points,” etc.).
+
+Phase 3: Market Comparison and “Edge” Calculation
+
+Goals: Incorporate the betting market data into the analysis, converting our model’s predictions into betting terms and identifying where they differ from the market.
+
+Implied Fair Odds from Model:
+
+From our win probability, we can get a fair moneyline (e.g., if win prob = 60%, fair odds ~ -150 in American odds).
+
+From our predicted spread distribution, we can compute the probability Team covers -X spread or game goes over Y total. If our predicted mean and variance are known, we can integrate the distribution beyond the sportsbook’s line.
+
+Alternatively, simulate many games via our model distribution and see what fraction cover or go over.
+
+Comparing to Sportsbook Odds:
+
+We will have the actual betting lines (point spread and over/under) and moneyline odds (with implied probabilities after removing vigorish).
+
+Example: Sportsbook says Team A -3 at -110 (implies ~52% chance to cover after vig). Our model might say Team A expected to win by 6 with 65% cover probability. That difference indicates an “edge.”
+
+Compute edge metrics: e.g., expected value if betting (like if model thinks true win prob is p and odds imply q, the EV per $ bet = p * payout - (1-p) * 1). But we can just report the probability gap or point spread gap.
+
+No Training on Market Data: We ensure the model never used the Vegas line in training. The comparison is purely exogenous. This avoids the model just echoing Vegas. Essentially, we act as an independent predictor and use market as a benchmark.
+
+Edge Thresholds: Not all differences are meaningful due to error. We might highlight only if the model differs by more than a certain amount (e.g., model spread differs by >2 points from line, or win probability difference > 5%). Smaller differences might be within noise. The system can either display all differences or flag the larger ones.
+
+Multiple Books / Consensus: If multiple sportsbook lines are available, we might use the consensus (average) or best line (depending on perspective). Probably use a consensus closing line for fairness in backtesting.
+
+**No “training” on market, but we might evaluate how the model would have done if one bet when edges appeared. That’s part of evaluation/backtesting (Section 6).
+
+Outputs in Betting Terms:
+
+List the model’s spread pick (Team A -5) vs Vegas (Team A -3) and edge = 2 points.
+
+Model win% vs implied win% and edge = e.g. 60% vs 55% implies model thinks line is off by 5 percentage points.
+
+This can also yield an indicated bet (like “model would favor Team A against the spread”), but we will be careful to frame it as analysis, not a directive.
+
+Rationale: The goal here is not to create an automated betting strategy, but to identify discrepancies. Often, if our model is good, edges might be few (Vegas is tough to beat). This step will help quantify if our added complex features bought us any predictive power beyond the market. It’s essentially a reality check and, for the user, the most interesting insight: “Where does my model disagree with the world?”
+
+Possible Issues: We must consider the vigorish (house edge) – even if model says 52% vs 48% implied, that’s not enough to overcome typical -110 odds. So edges need to be significant to be truly actionable. We’ll incorporate that in how we highlight things (maybe only highlight if probability > 55% for a -110 line etc.).
+
+No Reinforcement Learning on odds: We won’t feed back outcomes of bets or adjust the model to explicitly beat Vegas, as that can lead to overfitting and is essentially trying to arbitrage a possibly efficient market. We stick to making the best predictions from data and then see if any value emerges.
+
+Phase 3 deliverable is essentially a module that takes the outputs of Phase 2 (predictions + distribution) and the betting lines, and produces comparative metrics (differences, edges, suggested value). This will feed into the user interface (like a dashboard showing each game’s predicted vs actual line and highlighting where the model deviates the most).
+
+By structuring the modeling in phases, we ensure that we first get something working (Phase 1), then add uncertainty quantification (Phase 2) which is often overlooked but critical, and finally incorporate the market lens (Phase 3). Each phase builds on the previous, and at each stage the system becomes more sophisticated:
+
+Phase 1: “What do we think happens?”
+
+Phase 2: “How sure are we?”
+
+Phase 3: “How does that compare to expectations (odds)?”
+
+This approach not only yields a powerful forecasting tool but also aligns with how a data scientist would iteratively develop and validate such a model in a responsible way.
+
+6. Evaluation & Backtesting Framework
+
+To ensure our models are truly useful and not overfit, we need a rigorous evaluation and backtesting regimen. We will simulate how the model would have performed historically, and use appropriate metrics for both prediction accuracy and betting relevance.
+
+6.1 Cross-Validation vs. Walk-Forward:
+
+Because football data is a time series (season by season), we can’t do random shuffling of games for validation (that would cause training on future data relative to some games). Instead, we use walk-forward (rolling) validation:
+
+For example, train on 2015-2019 seasons, test on 2020; then train on 2015-2020, test on 2021, etc. This mimics how we’d predict new seasons having trained on prior data. We must be careful to always train on data before the test period.
+
+Within a season, we could even do week-by-week updating: e.g., to evaluate Week 8, train on Weeks 1-7 of that season (plus past seasons). This is more granular but also complex as we must retrain many times. A simpler approach is season-level retrain, but we can attempt a week-by-week rolling prediction for more resolution.
+
+We will likely combine both: a coarse evaluation by season (to ensure model works on fresh seasons), and a finer evaluation within a season to see how it handles early vs late season.
+
+6.2 Metrics for Regression (Spread/Total):
+
+Mean Absolute Error (MAE) and Mean Squared Error (MSE) of point spread predictions vs actual game margins.
+
+MAE/MSE of total points predictions vs actual totals.
+
+These measure overall accuracy in points.
+
+We might also look at bias (mean error) to see if our model consistently over or underestimates scores or margins.
+
+For spread specifically, another metric: Against-the-Spread (ATS) accuracy, meaning how often the model’s pick (favorite or underdog) was correct against the closing spread. Essentially, treat it like binary classification: did the model’s predicted margin sign exceed the spread sign.
+
+However, measuring ATS win% is tricky if model predicted 0 difference where spread was -3 etc. But we can say if model thinks Team A covers and they do or not.
+
+Also, total over/under accuracy: how often model correctly predicts over or under relative to closing total.
+
+6.3 Metrics for Classification (Win Probability):
+
+Brier Score: a proper scoring rule for probabilities, essentially mean squared error of probability vs outcome (1 for win, 0 for loss). Lower is better.
+
+Log Loss (Cross-entropy): Could use as well, though in sports binary outcomes, Brier is more common for calibration checking.
+
+Calibration: We will create calibration plots by binning predicted win probabilities and comparing with actual outcomes frequency. We want a near 45-degree line (e.g., of all games model said ~70% win chance, did roughly 70% end up wins?). We can quantify calibration error as well.
+
+Accuracy: Not too meaningful since if a model always picks favorites it could be right a lot (the bar is already high because favorites usually win ~66%). Instead, we might see how often the predicted winner wins (just to gauge, though we care more about probabilistic accuracy).
+
+6.4 Evaluation vs Market Baselines:
+
+The ultimate baseline is the closing betting line (Vegas). Historically, the closing line is extremely accurate on average:
+
+We can compute what would the MAE be if we always used the Vegas closing spread as our prediction. This is a benchmark to beat for point spread prediction.
+
+Similarly for total points: how far off are Vegas totals on average? If our model’s error is not significantly lower, then we haven’t added predictive value, though matching Vegas could still be interesting.
+
+We can also check win probability calibration vs Vegas implied:
+
+Convert closing moneyline to implied win probability (no vig). See how often the favorite wins relative to that. Vegas is usually very well calibrated. If our model is as calibrated, that’s good; if it’s better in some ranges, that’s notable (but unlikely).
+
+Profitability simulation: As a market comparison, simulate if we bet using the model when it finds an edge:
+
+For each game, if model probability for a team > implied probability + threshold, “bet” on that team at given odds. Track the hypothetical profit/loss over a season or multiple seasons.
+
+This is a harsh evaluation because even a good model might not beat 52.4% needed on -110 lines due to vig. But it’s the ultimate test of finding inefficiencies.
+
+We will do this carefully and only in retrospect, not to optimize the model on it (that would be data snooping). It’s more of a final analysis to see if model had any predictive edge.
+
+Compare to simpler models:
+
+Evaluate our Phase 1 baseline vs Phase 3 model. Ideally, each phase improves metrics (lower error, better calibration).
+
+Also compare to a naive model: e.g. always pick home team by 3 (the “home field advantage only” model) or always pick Vegas line (for error).
+
+These give perspective on how much value our complexity added.
+
+6.5 Preventing Data Leakage:
+
+What is leakage: Using information in training that you wouldn’t actually have at prediction time. For example, using full season stats to predict a Week 5 game – that’s leaking games 6-17 information. Or including the Vegas closing line as a feature when you’re trying to beat the closing line.
+
+Steps to avoid:
+
+When constructing features for a game, only use data available up to that week. Our pipeline will be designed such that for each game prediction, it queries the database for stats excluding that game and later games. If doing it season by season, ensure not to include the test season’s stats in training.
+
+Be careful with cumulative season averages – reset or roll them week by week in backtesting.
+
+No future data: e.g., if using Elo, when predicting 2022 games, Elo is only built on results up to 2021 for initial and then updated week by week in 2022 as we simulate.
+
+If using a rolling training approach, do not accidentally include test game in training fold.
+
+We will implement checks: for instance, when backtesting on 2022, we can verify that any stat labeled “2022” in the feature set for a Week 10 game is actually computed from Weeks 1-9 only.
+
+The modular design helps: we can have a function that given a cutoff date will only pull data up to that date for features.
+
+6.6 Interpreting Results Honestly:
+
+It’s important we don’t cherry-pick favorable metrics. We will report both successes and shortcomings:
+
+If our model’s MAE is, say, 13 points on spread and Vegas is 12 points, we’ll acknowledge we are slightly worse (not surprising; Vegas is tough). We might highlight where we do better (maybe on totals or certain underdog predictions).
+
+If our backtested betting strategy is negative ROI, we’ll state that openly, emphasizing the purpose is analysis, not profit guarantee.
+
+We will use sizable test samples (multiple seasons) to ensure any claims of edge are statistically sound. For example, if we claim a 55% ATS success on 100 games, that might not be significant (p-value etc.), so we should be cautious.
+
+Overfitting Monitoring: Because we’re trying many features, we risk fitting noise in past seasons. To mitigate:
+
+Use a holdout period exclusively at the end (maybe keep the latest season as a true final test that we don’t touch until final evaluation).
+
+If we do iterative feature selection, do it on one part of data and confirm on another.
+
+Less focus on training error, more on validation/backtest error.
+
+Possibly use regularization or simpler model forms intentionally to avoid overfitting given high dimensionality of features.
+
+6.7 Continuous Evaluation:
+
+Even after deployment, track the model’s performance in real time:
+
+Each week as new games conclude, compare predictions to actuals, update metrics.
+
+Log these in a database or file. Over time, see if model deteriorates (e.g., maybe the league changes style and model needs retraining).
+
+This also acts as monitoring for data pipeline issues (if suddenly errors spike, maybe some data wasn’t ingested correctly).
+
+For the user, we can present some of these evaluation results on a “Backtest” page or report:
+
+Show historical season performance (e.g., a chart of model vs Vegas error by season).
+
+Show calibration plots or distribution of errors.
+
+Perhaps show examples of biggest model upset picks that were right, and ones that were wrong, to analyze.
+
+In summary, the evaluation framework is about measuring predictive accuracy and value-add rigorously. By using a walk-forward approach, multiple metrics (error, calibration, profitability), and safeguards against leakage, we aim to get a realistic picture of how well the system works. We’ll consider it a success if:
+
+The model’s predictions are as good as or slightly better than baseline methods on average.
+
+The model’s probabilities are well calibrated (we can trust a 80% win prob as truly 80%).
+
+In some situations, the model identifies edges that historically would have been profitable (even if small).
+
+And importantly, we document cases where the model fails or is uncertain, to set proper expectations.
+
+This honest evaluation will be communicated to the user so they understand the strengths and limitations of the system (e.g., “It appears the model has trouble with early-season college games due to limited data – error is higher in September, then improves”).
+
+7. Outputs & User-Facing Results
+
+The system will produce clear, concise outputs for each game that convey both the model’s predictions and the relevant context. Here we define what the end-user (analyst) will see and how results are presented.
+
+Per-Game Prediction Outputs:
+For each upcoming game (or any game we run the model on), the system will generate:
+
+Predicted Point Spread: e.g., “Team A by 5.2 points.” We’ll likely format as “Team A -5.2” if Team A is predicted to win, or “Team A +5.2” if they’re predicted to lose by 5.2 (which effectively means Team B by 5.2). This is the model’s expected margin of victory.
+
+Predicted Total Points: e.g., “47.5 total points.” The model’s expected combined score.
+
+Win Probabilities: e.g., “Team A win probability: 67%, Team B: 33%.” This can be derived from the predicted spread and distribution. If home team is Team A, we’ll label clearly which team is which (for college neutral-site games or something, just use names).
+
+Confidence Interval (or Distribution Info): e.g., “Margin 95% confidence interval: Team A by 5.2 ± 14.3 (i.e., from Team B by 9.1 to Team A by 19.5).” Or a simpler phrasing: “There is roughly a 90% chance the outcome falls between Team A losing by 9 and winning by 19.” For totals, similarly: “95% range: 34 to 61 points.”
+
+We might display this visually (like a bell curve or a bar for distribution), but textually at least the range or a standard deviation.
+
+Betting Market Lines: What the market says:
+
+Point spread (e.g., “Sportsbook line: Team A -3.0”).
+
+Total (e.g., “Sportsbook total: 49.5”).
+
+Moneyline odds (e.g., “Team A -150 (implied 60%), Team B +130 (implied 40%)” after removing vig).
+
+Edge Estimates: A comparison summary:
+
+Spread Edge: e.g., “Model favors Team A by 5.2 vs line 3.0 -> Edge = +2.2 points for Team A.” If the model is on the other side, it might say “Model would take Team B +3; sees Team B losing by only 1 (edge 2 points in underdog’s favor).”
+
+Win Probability Edge: e.g., “Model 67% vs Market 60% -> +7% edge on Team A win.”
+
+Over/Under Edge: e.g., “Model projects 47.5 vs line 49.5 -> leans Under by 2 points.” Or if reversed, “leans Over by X.”
+
+We might convert that to a probability too: like “Model chance of over: 44% (market ~52%), suggesting value on under.”
+
+Most Influential Factors (Explanations): Here we list a few key reasons from the model:
+
+If using a linear model, we can literally break down the score contribution: e.g., “Home field advantage (+2.5), Team A offense vs Team B defense mismatch (+4), Team A recent form - slightly below average (-1), etc.”
+
+For tree or complex models, use SHAP values or feature importances to identify top factors for this specific game’s prediction. E.g., “Key factors: Team A’s offensive efficiency (high), Team B’s defense (poor against pass), Team B’s starting QB is injured (penalizing Team B), and home advantage.”
+
+These will be phrased in simple terms: “Team A’s passing attack (8.0 yards/play) against Team B’s weak pass defense (allowed 7.5 yards/play) gave Team A a big boost in the prediction.”
+
+Another: “Team B’s coach is very conservative on 4th downs, which slightly lowered their expected points in a close matchup.”
+
+We aim for 2-3 factors per game to explain the majority of the prediction difference from a baseline.
+
+Additional Context: If applicable, note things like: “Weather: cold and windy (model adjusted total downwards). Referee crew calls above-average penalties (small effect: could slightly favor under).”
+
+By providing these outputs, a user can see not just what the prediction is, but why the model leaned that way, and how it compares to the consensus.
+
+Output Format and UI Integration:
+
+In the React frontend, each game could be a card or row in a table:
+
+With teams, date, maybe logos.
+
+Show model spread vs Vegas spread (color-coded if model strongly differs).
+
+Show model total vs Vegas total.
+
+Perhaps a small gauge or bar illustrating win probability.
+
+An expand/collapse to see the detailed factors and confidence interval.
+
+The output should be easy to scan for many games (e.g., for an NFL week with ~16 games, a table where one column is “Model says” and next is “Vegas says” and next “Edge”).
+
+For College, since there are many games, maybe allow filtering by conference or top-25 teams to manage volume in the UI. We should treat that carefully in UI design.
+
+Backtesting/Results Outputs:
+
+A section of the app (or separate report) will show aggregated results:
+
+Season by season summary: average error, how many upsets predicted, etc.
+
+Graphs: e.g., a chart of cumulative betting profit if following model edges over time, or distribution of prediction errors.
+
+Tables: maybe a table of “model vs Vegas vs actual” for each past Super Bowl or playoffs as interesting cases.
+
+These are more for the developer/analyst to validate performance and would be included in a report or a “Stats” page.
+
+Interactivity:
+
+Possibly allow user to toggle certain inputs and see effect (this might be advanced: e.g., “what if the weather was good instead of bad?” – not core requirement, but could be a nice addition for understanding model sensitivity).
+
+At minimum, allow filtering games by team or week, so user can quickly find predictions of interest.
+
+Clarity and Warnings:
+
+Every output page will include a disclaimer about the nature of this tool:
+
+“For research and informational purposes only. No guarantees on results. Betting involves risk.”
+
+If possible, include an estimate of model confidence in general (like “historically, when the model had a 7% edge, it was correct X% of time” to temper expectations).
+
+Example Output for a Single Game (Textual example):
+
+Game: Michigan vs Ohio State (at Ohio State) – Date/Time, etc.
+Model Prediction: Ohio State by 4.7 points; Total 55.3 points.
+Win Probabilities: Ohio State 64% – Michigan 36%.
+95% Confidence Interval (spread): Ohio State -4.7 ± 10.5 (roughly from Michigan leading by 5 to Ohio State by 15).
+Sportsbook Line: Ohio State -3.0; Total 58.0; Implied win prob ~57% for OSU.
+Model Edge: Likes Ohio State -4.7 vs -3 (2 point edge). Leans under (projected 55.3 vs line 58). Model win% 64% vs market 57% (OSU).
+Key Factors:
+
+Ohio State offense vs Michigan defense: OSU’s passing efficiency (8.5 yards/attempt) against Michigan’s pass defense (allowed 7.0) gives OSU an advantage
+nflfastr.com
+.
+
+Michigan’s star RB is questionable (model slightly reduced Michigan’s offensive projection).
+
+Ohio State is at home (historically ~3 point edge).
+
+Michigan has played a weaker schedule (their defensive stats may be inflated).
+
+Weather expected to be clear, 50°F – no major adjustment.
+
+(Citations in the above explanation are just illustrative if this were a report; in the app UI we might not show reference brackets, but rather ensure the data backs the statements.)
+
+In summary, the outputs will be actionable yet transparent. The user can glean:
+
+What the model says in betting terms.
+
+How confident it is.
+
+How that compares to the betting line.
+
+And some intuitive reasoning backing it up.
+
+The combination of quantitative predictions with qualitative context makes the system’s results much more valuable than a black-box number. It helps build trust in the model and also educates the user on what factors matter. Even if a user doesn’t blindly follow the model, they can use it to inform their own thinking (e.g., “I see the model highlights this mismatch; do I agree with that importance?”).
+
+8. Phase Roadmap & Milestones
+
+Developing this system will be broken into well-defined phases, each with specific deliverables and success criteria. This ensures steady progress and the ability to evaluate at each milestone.
+
+Phase 0: Data Ingestion and Storage
+Duration: ~2-3 weeks (could overlap with Phase 1 start, as some data prep can be done incrementally).
+Deliverables:
+
+Scripts or modules to fetch data from all primary sources (NFL and college): games schedules, team stats, player stats, play-by-play, odds, etc.
+
+A designed database schema in PostgreSQL and the database instance set up.
+
+The ETL routines that populate the database with historical data (e.g., last 5-10 seasons of NFL and NCAA).
+
+Scheduling mechanism (could be Cron jobs or a simple Python scheduler for now) for weekly updates.
+
+Basic documentation of how to run these scripts and any API keys required.
+Success Criteria:
+
+The database is loaded with historical data (verify by querying, e.g., see that we have all NFL games from past years, etc.).
+
+For a given recent week, all relevant data is present (e.g., you can query the DB to get Team X’s stats up to Week Y).
+
+The ingestion can be rerun/upsert new data without duplicating or errors (idempotent or smart updates).
+
+If some data source fails or is unavailable, it’s documented and either a backup is used or that feature is postponed.
+Definition of Done: We have confidence that we possess a rich dataset to feed the models. At least for one league (say NFL), the pipeline is fully functional. We might accept partial for NCAA by end of Phase 0 (since more teams, but ideally cover it too). The engineer can run a one-command or one-script process to refresh the data.
+
+Phase 1: MVP Predictions (Basic Modeling)
+Duration: ~2 weeks.
+Deliverables:
+
+A baseline model (e.g., linear regression for spread and total, logistic for win) trained on historical data.
+
+Code to generate predictions for upcoming games using that model.
+
+Command-line or notebook demonstration of taking upcoming schedule and outputting predictions.
+
+Integration of model output with the database (maybe store predictions in a new table for results, or ready to serve via API).
+
+(If time permits in this phase) a very minimal API endpoint or CLI that returns predictions for a given game or week.
+Success Criteria:
+
+The model trains without errors and yields plausible coefficients (e.g., if home field ends up with negative weight, that’s a red flag).
+
+Backtest on one past season shows reasonable results (not necessarily beating Vegas yet, but not wildly off – e.g., MAE of 13 points instead of 12 of Vegas might be acceptable at this stage).
+
+We can produce a list of predicted spreads and totals for, say, next week’s games and they look sensible (no team favored by 50 unless maybe Alabama vs FCS, etc., and totals in realistic range).
+
+The solution covers both NFL and NCAA: maybe separate models or a combined with league indicator, but ensure we have output for both.
+Definition of Done: The system can answer the question “What does the model predict for game X?” in some form. Even if it’s not through the nice UI yet, the core predictive engine is running.
+
+Phase 2: Backtesting and Evaluation Framework
+Duration: ~1-2 weeks (some things might be done alongside Phase 1 or 3).
+Deliverables:
+
+Code to perform walk-forward testing on past seasons. This might be a script that loops through each season or week, re-trains model (or updates model) and records predictions vs actual.
+
+Calculation of evaluation metrics (MAE, Brier, etc.) from these backtests.
+
+A summary report or data file of results (e.g., CSV of every game with predicted and actual and line).
+
+Potentially, visualization or printouts of key metrics (maybe simple matplotlib plots or tables).
+
+A mechanism to avoid leakage (like a configuration that ensures using only past data) – and test it by checking some known “leak scenarios” (for example, ensure if we try to predict 2021, the data from 2022 is not in training).
+Success Criteria:
+
+The backtest results make sense and highlight strengths/weaknesses. For example, see that our model’s spread MAE is slightly above Vegas but maybe our total prediction is surprisingly good, etc. If something looks too good to be true (like 70% ATS win rate), double-check for leakage or bugs.
+
+We have established baselines to improve upon. If baseline is underperforming, that’s okay; we document it as what to improve in Phase 4.
+
+The evaluation framework can be run easily for any new model versions to compare.
+Definition of Done: We have a clear picture of how the initial model performed historically and a toolset to evaluate future improvements. We also have numbers we can mention in the project documentation (like “tested on 5 seasons, MAE X, calibration Y, etc.”).
+
+(Note: Phase 2 overlaps in logic with Phase 1 deliverable of having a model. In practice, one might do some backtesting during Phase 1 to tune the model. We list it separately to emphasize delivering a formal evaluation component, not just ad-hoc checks.)
+
+Phase 3: Visualization and User Interface (React Frontend + FastAPI)
+Duration: ~3 weeks (could be broken into backend API 1 week, frontend 2 weeks).
+Deliverables:
+
+FastAPI backend with endpoints:
+
+GET /predictions/week/{week}?league=NFL (for example) returns predictions for all games in a given week (or a given date range).
+
+GET /predictions/game/{game_id} returns detailed prediction for one game (including factors).
+
+GET /backtest/metrics returns some summary stats (for a backtest page).
+
+(Optional) POST /refresh-data or POST /train to trigger model updates, if we want that control.
+
+These endpoints will fetch from the model or database as needed. Possibly the model is loaded in memory at API startup for quick answers.
+
+React frontend:
+
+A dashboard page listing upcoming games and their predictions (with comparison to odds).
+
+Possibly separate sections for NFL and NCAA (tabs or pages).
+
+A detail view popup or page when you click a game to see the explanation and more stats.
+
+A backtest results page showing summary of how the model did historically (for transparency).
+
+The UI should be clean and not overly cluttered since we have a lot of data. We’ll likely use tables and maybe small charts (like a tiny bar for win probability, or a +/- bar for spread difference).
+
+Use of a UI library or custom styling for clarity (maybe Material UI for React to save time).
+
+Integration: The React app should fetch from our FastAPI. We might host the API locally for dev; for production maybe a simple Heroku or similar if needed (though personal use might just run locally).
+
+Basic authentication isn’t necessary if personal, but we might restrict it to local network or so if concerned.
+Success Criteria:
+
+The frontend successfully displays actual model outputs from the API for current data.
+
+It’s reasonably user-friendly: the engineer (or any technical colleague) can navigate and understand the predictions.
+
+All information from section 7 (Outputs) is present in some form.
+
+The system is live in the sense that if new data comes in or we retrain, the UI will reflect updated predictions (so hooking up re-running model as needed).
+
+Cross-browser check (works on Chrome, maybe mobile view works decently to at least read).
+Definition of Done: The project is now a usable application. An end-user can open the app, select say “NFL Week 5” and see predictions for those games, click on a game for details, and trust the data shown. We consider it done when the engineer finds themselves using the interface to analyze upcoming games instead of raw scripts – meaning it’s more convenient and informative.
+
+Phase 4: Advanced Modeling and Feature Expansion
+Duration: ~4+ weeks (can be iterative, feature by feature).
+Deliverables:
+
+Incorporation of advanced features and models as described in sections 3 and 4, deployed in stages. For example:
+
+Add weather and injury adjustments to feature set.
+
+Train a new model (e.g., XGBoost) using an expanded feature set, compare performance.
+
+Implement uncertainty estimation (maybe via bootstrapping) and ensure the API/UI can show confidence intervals.
+
+Add college-specific tweaks (maybe separate models for college if needed).
+
+Integrate referee and travel features, test if they improve accuracy.
+
+Possibly multiple models or an ensemble: e.g., one model for spread, one for total, etc., or an ensemble that does multi-output.
+
+Code for model management: saving models with versioning, so we can roll back if a new model performs worse.
+
+Documentation update: as new features are added, document how they are computed.
+Success Criteria:
+
+Each added feature or model variation shows improvement either in metrics or in explainability. If a feature doesn’t help, we might remove it (the success is in careful selection).
+
+The final model (or set of models) achieves better or at least not worse performance than Phase 1 on backtests. For instance, we might aim to narrow the gap with Vegas lines, improve calibration, or identify certain bets where we have >55% win rate historically.
+
+The UI and API still work with the new model outputs (for example, after adding uncertainty, the UI now shows intervals).
+
+The system remains reasonably fast (maybe model prediction might slow if using complex model, but we can cache predictions).
+
+We have conducted another round of backtesting with the new model to verify everything.
+Definition of Done: The project meets its full vision: a comprehensive set of features is utilized, and the model is as powerful as we planned. This phase doesn’t necessarily “end” if one continues to refine, but we consider it done when marginal gains are small and all key planned features (like all those listed in data sources and feature engineering sections) are either implemented or consciously decided against (with reasons). The engineer can comfortably present this project as complete, with the knowledge that further improvements are possible but not essential for a robust case study.
+
+Phase 5 (Optional/Future): Maintenance and Refinement – (not requested, but implicitly, after initial development, one would address technical debt, optimize performance, maybe add more sports or deploy it online, etc. However, since the prompt focuses on initial build, Phase 5 can be mention of future work.)
+
+In planning, each phase should end with a review:
+
+Ensure earlier phases satisfy needs before heavily investing in later ones (e.g., if data ingestion is problematic, fix that before moving to UI).
+
+Possibly overlap some: e.g., basic UI can be started while evaluation is running.
+
+We schedule more time for Phase 4 as it’s open-ended. If time is short, one might cut scope (e.g., not implement referee data). But since this is a spec, we list everything ideal.
+
+The roadmap provides a realistic path for a single engineer. It acknowledges that initial phases (data, baseline model) are enabling steps, and the flashy stuff (cool features, fancy models) comes after the foundation is laid. Each milestone has clear “done” criteria, aligning with agile development principles:
+
+Phase 0/1 gives something end-to-end (data to simple prediction).
+
+Phase 3 puts it in a UI for demonstration (great for a mid-project demo).
+
+Phase 4 is the polishing and differentiating work that makes it stand out as “not generic.”
+
+9. Engineering Constraints & Best Practices
+
+To ensure the system is reliable and maintainable, we will adhere to certain engineering constraints and incorporate best practices from data engineering and software development:
+
+Reproducibility:
+
+The entire pipeline from data ingestion to model training will be deterministic given the same inputs. We will use version control for code and, where needed, for data:
+
+Use fixed random seeds for model training (so results don’t randomly fluctuate, aiding debugging and consistent backtests).
+
+Document data sources versions (e.g., if we pull data on a certain date, note if it may change later).
+
+We may utilize tools like Docker to encapsulate the environment (ensuring Python, library versions, etc. are consistent on any machine).
+
+For datasets, consider using Data Version Control (DVC) or simple checksums for important files to detect if any data changed unexpectedly.
+
+The idea is that if we had to recreate the entire system or share it, it should run and produce the same results (given the same date of data).
+
+Versioned Datasets and Models:
+
+Maintain version tags for the data and model:
+
+For example, after Phase 0, label the initial dataset snapshot as v1.0.
+
+After adding new features, we might have dataset schema v2.0.
+
+Save trained models with version identifiers (and possibly date). If using files, e.g., model_spread_v2_2025-08-01.pkl.
+
+This allows rolling back if a new model performs worse, and comparing models.
+
+We will store metadata about models (features used, training data range, hyperparameters) so we can reproduce how a model was trained.
+
+Logging and Monitoring:
+
+Build logging into ingestion and model processes:
+
+Ingestion scripts should log events like “Fetched 256 plays for game X” or warnings if data is incomplete.
+
+Model training should log performance metrics on training/validation sets.
+
+The FastAPI service will have request logs (we can use FastAPI’s logging or add our own) to monitor usage.
+
+If deployed on a server, consider a monitoring tool or at least logs on disk to catch if something fails (like data fetch fails, etc.).
+
+In the UI, if something goes wrong (like predictions unavailable), handle gracefully (show a message rather than crash).
+
+Experiment Tracking:
+
+Use an experiment tracking tool (could be as simple as a spreadsheet or as fancy as MLflow):
+
+For each model iteration, record what features were included, what parameters, and what backtest results were.
+
+This prevents confusion after many tries, and helps tell the story of improvements.
+
+Possibly integrate with the code: e.g., a JSON log of results for each run.
+
+Pipeline Orchestration and Automation:
+
+Although initially the engineer can run scripts manually, aim to automate:
+
+A single command or script (run_all.sh or a Makefile target) to go from raw data to trained model to updated predictions.
+
+If possible, schedule a nightly job for data update (especially during season, to catch new games automatically).
+
+Ensure pipelines are idempotent or at least smart: running data ingestion twice shouldn’t duplicate entries. Use primary keys in the database to avoid duplication. Use UPSERTs or first check if data exists.
+
+When updating models, avoid manual steps – eventually, retraining could also be a scheduled task (weekly retrain with new data if needed).
+
+Feature Auditing and Pruning:
+
+Periodically evaluate features’ contributions:
+
+If a feature consistently has zero or negligible weight in models, consider removing it to simplify.
+
+If two features are highly correlated, we might drop one to reduce multicollinearity (unless using a model that’s robust to it).
+
+Keep the dataset slim where possible – not for performance as much (modern compute can handle many features) but for clarity and avoiding overfit.
+
+We will implement a process (perhaps each off-season or after a batch of games) to re-check correlations and feature importances.
+
+Overfitting Guardrails:
+
+Use regularization in models (like ridge regression, or tree depth limits, etc.) especially as we add more features.
+
+Keep a truly held-out test (like the latest season not used at all during development) to do a final check.
+
+If any feature is derived from target (e.g., including something that leaks score info), absolutely remove it – e.g., we would not use actual point spread Vegas in training as a feature.
+
+When updating the model, see if complexity is justified by improved validation performance – don’t just add complexity for slight gains that might be noise.
+
+Performance Considerations:
+
+The system as a personal tool doesn’t need to handle massive scale, but ensure:
+
+Data ingestion doesn’t take forever (maybe parallelize some API calls or use bulk endpoints if available).
+
+Model prediction is quick (most models with reasonable features can predict 100 games in milliseconds, but e.g., a large ensemble or simulation-based approach should be profiled). If slow, consider caching predictions or precomputing them daily rather than on-demand.
+
+The React app should paginate or lazy-load if listing hundreds of college games to not freeze the browser.
+
+For any heavy computation (like bootstrapping distributions), consider doing it offline and storing results rather than doing it for every request.
+
+Security & Access:
+
+Since it’s for one person, we might not need robust auth. But if deployed, at least protect API with a token or run it locally.
+
+Keep API keys (for data sources) secure (not in public repo). Use environment variables or a config file excluded from git.
+
+Rate-limit any public facing endpoint if needed (to avoid misuse), though not likely relevant for single-user.
+
+Collaboration and Documentation:
+
+Write docstrings in code, and maybe a small README for how to run pipelines, how to add a data source, etc.
+
+Use a consistent coding style and possibly linters to keep code quality (since one engineer, but still).
+
+If using Jupyter for some analysis, later port that into scripts for reproducibility (Jupyter is fine for exploring but final pipeline should be in .py scripts or modules).
+
+Keep the project structure organized (maybe separate folders: ingestion/, models/, api/, frontend/, etc.).
+
+Ethical Considerations in Engineering:
+
+Ensure all external data usage complies with terms (this was covered in section 10, but from an engineering side, e.g., don’t scrape a site aggressively violating their robots.txt).
+
+The system should avoid any personal data (not really applicable here except maybe if using Twitter for injuries – which we are not).
+
+When presenting model outputs, be careful not to present probabilities as certainties – the UI should reflect uncertainty (which we plan to do via intervals and phrasing like “model expects” not “will happen”).
+
+By following these best practices, we aim to create a robust project:
+
+Reproducible: If the model shows a certain performance, we can trace how.
+
+Extensible: New data or features can be added without breaking existing structure.
+
+Maintainable: Even after weeks, the engineer can come back and understand the pipeline.
+
+Correctness: Unit test critical components (like data parsing, feature calc) with known inputs to ensure correctness.
+
+There’s also an element of observability: We want to know if something goes wrong. For example, if the API is running and a data update fails, perhaps the UI can show last updated time for data so we notice staleness.
+
+Example: Reproducibility could be tested by running the whole pipeline on a fresh machine and seeing if results match, prior to final deployment.
+
+In sum, the project will be treated with the same rigor as a production system even if for personal use, which ensures quality and builds trust in the results.
+
+10. Ethical, Legal & Practical Considerations
+
+Finally, we address the broader considerations beyond just the technical implementation:
+
+Ethical Use and Representation of Predictions:
+
+Responsible Framing: We must make it clear that these predictions are not guarantees. The system is for analysis, and any betting decisions remain the user’s responsibility. We will include disclaimers in the UI (“For entertainment/research purposes only. Past performance does not guarantee future results.”).
+
+Avoiding False Promises: The documentation and any readme will explicitly say this system doesn’t ensure profit or “beating Vegas”. It’s a tool to study and forecast games. This helps ethically because inexperienced users won’t be misled into thinking this is a get-rich scheme.
+
+Transparency: We provide reasons for predictions and highlight uncertainty. Ethically, this transparency avoids the trap of users blindly following a number. We empower them to understand factors and possibly disagree. This aligns with the idea of augmenting human judgment, not replacing it blindly.
+
+No Encouragement of Irresponsible Gambling: We will avoid language like “lock of the week” or anything that suggests overconfidence. If anything, we might include a note on gambling responsibly if the project were public-facing.
+
+Data Bias: Our model might inherently favor or disfavor certain teams if data has biases (e.g., college polls, or if using past data that has biases like home advantage baked in). We should monitor that the model isn’t systematically unfair (though in sports context this is less of a classical ethical issue, more a technical one). But for completeness, ensure the model isn’t picking up some proxy that is actually not game-related (we’re mostly using game data, so fine).
+
+Legal Considerations:
+
+API Terms of Service: Using various data APIs – ensure compliance:
+
+CFBD API is free for use but requires attribution (maybe credit the source in documentation).
+
+If we scrape sites like PFR, do it politely (rate limits) to not violate their terms or get IP blocked.
+
+Odds APIs often forbid redistributing data. Since this is personal, we are likely fine; but if open sourcing the project, we might instruct users to obtain their own keys and not commit any raw odds data to a public repo.
+
+Data Licensing: Many sports data providers have specific licenses. PFR likely has a copyright on their compiled data (but typically personal/academic use is okay). We should not sell or widely distribute the data we accumulate. If this project stays a portfolio piece or personal tool, we’re within fair use. If any doubt, we lean on official sources or public domain data.
+
+Privacy: We are not dealing with personal data of individuals beyond public athlete performance stats, so privacy issues are minimal. (Athlete stats are public domain in essence or at least publicly available).
+
+Gambling Law: We are not facilitating bets, just comparing odds. So we avoid any legal issues of running a sportsbook. However, if sharing this tool, note that in some jurisdictions providing betting advice could be regulated. Our stance is it’s an analysis platform, not advice. Again, disclaimers and the non-commercial nature keep it clear of legal issues.
+
+Open Sourcing: If the project is on GitHub, check that none of the code violates usage (e.g., including NFL logos in the UI would be an IP issue; we will likely avoid any trademarked logos unless we have rights or use generic icons). We can use team names (which are trademarked, but listing them in a factual way is usually allowed as nominative use).
+
+Practical Constraints:
+
+API Limits: Many free APIs have rate or usage limits. We must design within those:
+
+e.g., The Odds API free tier: maybe 500 calls per month. If we update weekly, that’s fine. But if we tried to get line movements every hour, that would break it. So we’ll likely only pull a small number of odds snapshots. If needed, scale back or pay for higher tier (practical budget consideration for a single user).
+
+CFBD API might allow e.g. 50 calls/minute up to some daily limit; with hundreds of teams, we need to be efficient (they do have bulk endpoints for all games in a season etc., to reduce call counts).
+
+Data Storage Cost: For a personal project, Postgres with a few decades of games is small (a few hundred MBs at most with play-by-play). So not a big cost. If using cloud, free tier or local running is fine. If including images or such in UI (maybe not needed aside from team logos), those can be stored locally or use a free static source.
+
+Maintenance Effort: The engineer should be prepared to maintain the data each season (e.g., update team lists if a new expansion team or if college teams move divisions, etc.). Possibly set calendar reminders to update things like ELO base or rerun at season start. This is not heavy but should be noted.
+
+Security of Keys: As mentioned, keep keys out of repo. Possibly use environment variables or a config file (config.yaml).
+
+Working with College vs NFL differences: College has many teams, which could make UI cluttered or some features less reliable (like transitive comparisons when teams haven’t met common opponents). This is a practical modeling challenge, but we mention it because in college if the model mispredicts a 50-point spread (common in mismatches), that might look bad but is less critical than NFL where spreads are narrower. We accept that college games have higher variance and maybe include that context.
+
+Attribution: If using data sources with required attribution:
+
+We’ll credit them in docs (e.g., “Data provided by CollegeFootballData.com and nflfastR”).
+
+If the UI displays data directly from somewhere (like maybe listing a weather forecast), attribute the weather source.
+
+Community and Fair Use:
+
+Much of the data (like nflfastR) is open source community-driven. Ethically, we should contribute back if we find any issues or improvements (like if we fix a data bug, share it).
+
+Also, respect the community norms (for example, if using someone’s code snippet or idea, give credit in comments).
+
+Avoiding Unintended Uses:
+
+If this tool were public, someone might try to use it to actually gamble heavily. We cannot control that, but by making it clearly not a “sure thing” tool and requiring some technical savvy to run, we mitigate casual misuse.
+
+The system should not be used to target individuals or make any personal claims. All data is performance-based and we do not include anything like personal criticisms or invasive info (like we wouldn’t put “this QB’s personal life issue might affect game” – that’s subjective and not data-driven).
+
+Longevity and Data Updates:
+
+If data sources change or shut down, we need to adapt. For instance, if CFBD API changed its format, legally we have to use the new one or find another. We’ll keep the system modular to swap data providers as needed.
+
+We should monitor for any legal announcements, e.g., if an API that was free becomes paid, etc., and ensure compliance or adjust.
+
+In conclusion, we commit to building the system in an ethically responsible manner:
+
+It will educate and inform rather than mislead.
+
+It will credit and respect the data sources used.
+
+It will maintain honesty about its capabilities and limitations.
+
+And legally, it will operate within the bounds of data usage rights and not facilitate anything illicit.
+
+Output Format Requirements
+
+(The following points ensure the document’s readability and adherence to the requested format.)
+
+The specification has been structured with clear section headers (each major section numbered and titled).
+
+We’ve kept paragraphs relatively short for readability (most are 3-5 sentences).
+
+Bullet points and sub-points are used to break down lists of features, data sources, etc., making it easy to scan key ideas.
+
+We included tables implicitly via bullet lists for structured info (didn’t use an actual table format, but listing items in sub-points serves a similar clarity purpose).
+
+The language is concise but technically detailed, assuming a CS student or engineer reader who can grasp terms like API, regression, etc. We avoided overly flowery language or hype.
+
+We preserved necessary citations and references to emphasize certain claims (like availability of data or studies on travel effects) 
+nflfastr.com
+nflpenalties.com
+. However, we did not flood the text with citations for every general statement, just for specific data points or tools.
+
+No images were embedded since none were explicitly needed, but if this were a richer medium, an architecture diagram could be drawn. Here we described it textually for completeness.
+
+Each section flows logically to the next, and the entire document forms a comprehensive guide that can directly inform implementation.

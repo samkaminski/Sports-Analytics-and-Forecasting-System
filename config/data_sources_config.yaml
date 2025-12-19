@@ -1,0 +1,69 @@
+# Data Sources Configuration
+# 
+# USE: Defines API endpoints, rate limits, and data source settings
+# WHAT WILL BE BUILT: Configuration for NFL and NCAA data sources including:
+#   - API endpoints and authentication
+#   - Rate limiting settings
+#   - Data update schedules
+# HOW IT WORKS: Loaded by data ingestion modules to know where to fetch data
+# FITS IN PROJECT: Enables Phase 0 data ingestion to pull from multiple sources
+
+# NFL Data Sources
+nfl:
+  # Pro-Football-Reference (scraping)
+  pfr:
+    base_url: "https://www.pro-football-reference.com"
+    rate_limit_seconds: 2  # Delay between requests to be respectful
+  
+  # nflfastR (play-by-play data)
+  nflfastr:
+    base_url: "https://github.com/nflverse/nflverse-data"
+    data_format: "parquet"
+    update_frequency: "daily"
+  
+  # NFL API (if available)
+  nfl_api:
+    base_url: "https://api.nfl.com"
+    requires_auth: true
+    api_key_env_var: "NFL_API_KEY"
+
+# NCAA Data Sources
+ncaa:
+  # CollegeFootballData.com API
+  cfbd:
+    base_url: "https://api.collegefootballdata.com"
+    requires_auth: true
+    api_key_env_var: "CFBD_API_KEY"
+    rate_limit_per_minute: 100
+  
+  # SportsDataVerse (cfbfastR alternative)
+  sportsdataverse:
+    base_url: "https://cfbfastr.sportsdataverse.org"
+    data_format: "parquet"
+
+# Betting Odds Sources
+odds:
+  the_odds_api:
+    base_url: "https://api.the-odds-api.com"
+    requires_auth: true
+    api_key_env_var: "THE_ODDS_API_KEY"
+    rate_limit_per_month: 500  # Free tier limit
+
+# Weather Data
+weather:
+  openweathermap:
+    base_url: "https://api.openweathermap.org/data/2.5"
+    requires_auth: true
+    api_key_env_var: "OPENWEATHER_API_KEY"
+
+# Data Update Schedule
+update_schedule:
+  nfl:
+    game_results: "Tuesday 06:00"  # After Monday night game
+    upcoming_lines: "Tuesday 10:00"
+    final_lines: "Sunday 12:00"
+  ncaa:
+    game_results: "Sunday 08:00"
+    upcoming_lines: "Sunday 12:00"
+    final_lines: "Saturday 10:00"
+

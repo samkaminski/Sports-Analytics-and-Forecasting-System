@@ -1,0 +1,82 @@
+# Model Configuration
+# 
+# USE: Defines model hyperparameters, feature lists, and training settings
+# WHAT WILL BE BUILT: Configuration for Phase 1 baseline models:
+#   - Linear/Ridge regression for spread and total
+#   - Logistic regression for win probability
+#   - Feature lists and preprocessing options
+# HOW IT WORKS: Loaded by model training scripts to configure model behavior
+# FITS IN PROJECT: Centralizes model settings, making it easy to experiment
+#   with different configurations without changing code
+
+# Phase 1 Baseline Models
+models:
+  spread:
+    type: "Ridge"  # Options: LinearRegression, Ridge
+    alpha: 1.0  # Regularization strength for Ridge
+    fit_intercept: true
+    normalize: false  # Use StandardScaler instead
+  
+  total:
+    type: "Ridge"
+    alpha: 1.0
+    fit_intercept: true
+    normalize: false
+  
+  win_probability:
+    type: "LogisticRegression"
+    penalty: "l2"  # L2 regularization
+    C: 1.0  # Inverse of regularization strength
+    fit_intercept: true
+    max_iter: 1000
+
+# Feature Engineering Settings
+features:
+  # Minimal feature set for Phase 1
+  include:
+    - team_rating_diff  # Elo or SRS difference
+    - home_field_advantage  # Binary indicator
+    - point_diff_avg  # Rolling average point differential
+    - league_indicator  # NFL vs NCAA (if using combined model)
+  
+  # Rating system to use
+  rating_system: "elo"  # Options: "elo", "srs"
+  
+  # Rolling window for averages (in games)
+  rolling_window: 8  # Last 8 games
+  
+  # Minimum games required for a team to have stats
+  min_games_for_stats: 3
+
+# Training Settings
+training:
+  # Historical data range (seasons)
+  min_season: 2018
+  max_season: 2023
+  
+  # Test/validation split
+  test_size: 0.2
+  validation_size: 0.1
+  
+  # Cross-validation folds
+  cv_folds: 5
+  
+  # Walk-forward validation (for backtesting)
+  walk_forward: true
+  walk_forward_window: 3  # Train on last 3 seasons, test on next
+
+# Model Storage
+model_storage:
+  base_dir: "models/"
+  nfl_dir: "models/nfl/"
+  ncaa_dir: "models/ncaa/"
+  file_format: "joblib"  # Options: joblib, pickle
+
+# Prediction Settings
+prediction:
+  # Confidence interval (for Phase 2, placeholder here)
+  confidence_level: 0.95
+  
+  # Minimum confidence threshold for displaying predictions
+  min_confidence: 0.0  # Phase 1: all predictions shown
+
