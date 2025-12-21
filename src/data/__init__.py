@@ -7,6 +7,6 @@
 #   providing functions to fetch, transform, and load data
 # FITS IN PROJECT: Phase 0 foundation - without this, we have no data to model
 
-from .database import DatabaseManager, get_db_connection
+from .database import DatabaseManager, get_db_connection, Team, Game, TeamStats, TeamRating
 
-__all__ = ["DatabaseManager", "get_db_connection"]
+__all__ = ["DatabaseManager", "get_db_connection", "Team", "Game", "TeamStats", "TeamRating"]

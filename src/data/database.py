@@ -25,7 +25,7 @@ import os
 from contextlib import contextmanager
 from typing import Optional, Dict
 from datetime import date
-from sqlalchemy import create_engine, Index, ForeignKey
+from sqlalchemy import create_engine, Index, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.exc import SQLAlchemyError
@@ -228,6 +228,35 @@ class TeamStats(Base):
         Index('idx_team_stats_team_season', 'team_id', 'season'),
         Index('idx_team_stats_season', 'season'),
         Index('idx_team_stats_league_season', 'league', 'season'),
+    )
+
+
+class TeamRating(Base):
+    """
+    Team ratings table - stores Elo ratings and other rating systems.
+    
+    Used by: Feature engineering (rating difference is a key Phase 1 feature),
+             Model training (as primary feature)
+    """
+    __tablename__ = 'team_ratings'
+    
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    league: Mapped[str]
+    season: Mapped[int]
+    team_id: Mapped[str] = mapped_column(ForeignKey('teams.team_id'))
+    team_abbr: Mapped[str]
+    team_name: Mapped[Optional[str]] = mapped_column(default=None)
+    rating: Mapped[float]  # Elo rating
+    as_of_date: Mapped[date]  # Date this rating is valid as of
+    games_count: Mapped[int]  # Number of games used to compute this rating
+    created_at: Mapped[Optional[date]] = mapped_column(default=None)
+    updated_at: Mapped[Optional[date]] = mapped_column(default=None)
+    
+    __table_args__ = (
+        Index('idx_team_rating_league_season_team', 'league', 'season', 'team_id'),
+        Index('idx_team_rating_season', 'season'),
+        Index('idx_team_rating_team_id', 'team_id'),
+        UniqueConstraint('league', 'season', 'team_id', name='uq_team_rating_league_season_team'),
     )
 
 

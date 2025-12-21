@@ -23,13 +23,12 @@ FITS IN PROJECT:
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Dict
 from datetime import date
-import pandas as pd
-import numpy as np
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from ..data.database import TeamRating, Game, TeamStats
+from ..data.database import TeamRating, Game, Team
 
 logger = logging.getLogger(__name__)
 
@@ -38,82 +37,83 @@ def compute_elo_ratings(
     session: Session,
     league: str,
     season: int,
-    initial_rating: float = 1500.0,
-    k_factor: float = 32.0,
-    home_advantage: float = 100.0
-) -> Dict[str, float]:
+    *,
+    k_factor: float = 20.0,
+    base_rating: float = 1500.0
+) -> List[TeamRating]:
     """
     Compute Elo ratings for all teams in a league/season.
     
     Elo ratings measure team strength and update based on game results.
-    Higher rating = stronger team.
+    Processes games chronologically to ensure no data leakage.
     
     Args:
         session: Database session
         league: 'NFL' or 'NCAA'
         season: Season year
-        initial_rating: Starting Elo for new teams (default 1500)
-        k_factor: How much ratings change per game (default 32)
-        home_advantage: Elo points added for home team (default 100)
+        k_factor: How much ratings change per game (default 20.0)
+        base_rating: Starting Elo for all teams at season start (default 1500.0)
     
     Returns:
-        Dictionary mapping team_id to current Elo rating
+        List of TeamRating objects (one per team) with final ratings
     """
     logger.info(f"Computing Elo ratings for {league} season {season}")
     
-    # Get all teams in league
-    teams = session.query(TeamRating.team_id).filter_by(
-        league=league
-    ).distinct().all()
+    # Get all completed games for season, ordered chronologically
+    stmt = select(Game).where(
+        Game.league == league,
+        Game.season == season,
+        Game.completed == True,
+        Game.home_score.isnot(None),
+        Game.away_score.isnot(None)
+    ).order_by(Game.week, Game.date)
     
-    # Initialize ratings
-    ratings = {}
+    games = list(session.scalars(stmt).all())
+    
+    if not games:
+        logger.warning(f"No completed games found for {league} season {season}")
+        return []
+    
+    # Initialize all teams to base rating (season reset)
+    ratings = {}  # team_id -> current rating
+    team_games_count = {}  # team_id -> games played
+    team_info = {}  # team_id -> (team_abbr, team_name)
+    
+    # Get team info from database
+    team_stmt = select(Team).where(Team.league == league)
+    teams = session.scalars(team_stmt).all()
     for team in teams:
-        # Check if team has previous season rating
-        prev_rating = session.query(TeamRating).filter_by(
-            team_id=team.team_id,
-            league=league,
-            season=season - 1
-        ).order_by(TeamRating.week.desc()).first()
-        
-        if prev_rating:
-            # Start with previous season's final rating (with regression to mean)
-            ratings[team.team_id] = prev_rating.elo_rating * 0.75 + initial_rating * 0.25
-        else:
-            ratings[team.team_id] = initial_rating
+        team_info[team.team_id] = (team.abbreviation or team.team_id.replace(f"{league}_", ""), team.name)
     
-    # Get all games for season, ordered by week
-    games = session.query(Game).filter_by(
-        league=league,
-        season=season
-    ).order_by(Game.week, Game.date).all()
-    
-    # Update ratings game by game
+    # Process games chronologically
     for game in games:
-        if not game.completed or game.home_score is None or game.away_score is None:
-            continue
+        home_team_id = game.home_team_id
+        away_team_id = game.away_team_id
         
-        home_team = game.home_team_id
-        away_team = game.away_team_id
+        # Initialize teams if first time seeing them
+        if home_team_id not in ratings:
+            ratings[home_team_id] = base_rating
+            team_games_count[home_team_id] = 0
         
-        # Initialize teams if not seen before
-        if home_team not in ratings:
-            ratings[home_team] = initial_rating
-        if away_team not in ratings:
-            ratings[away_team] = initial_rating
+        if away_team_id not in ratings:
+            ratings[away_team_id] = base_rating
+            team_games_count[away_team_id] = 0
+        
+        # Home advantage: +55 Elo points
+        home_advantage_elo = 55.0
         
         # Calculate expected scores
-        home_expected = 1 / (1 + 10 ** ((ratings[away_team] - (ratings[home_team] + home_advantage)) / 400))
-        away_expected = 1 - home_expected
+        home_expected = 1.0 / (1.0 + 10.0 ** ((ratings[away_team_id] - (ratings[home_team_id] + home_advantage_elo)) / 400.0))
+        away_expected = 1.0 - home_expected
         
-        # Calculate actual scores (1 for win, 0.5 for tie, 0 for loss)
+        # Calculate actual outcome (1.0 for win, 0.5 for tie, 0.0 for loss)
         if game.home_score > game.away_score:
             home_actual = 1.0
             away_actual = 0.0
         elif game.home_score < game.away_score:
             home_actual = 0.0
             away_actual = 1.0
-        else:
+        else:  # Tie
             home_actual = 0.5
             away_actual = 0.5
         
@@ -121,34 +121,37 @@ def compute_elo_ratings(
         home_change = k_factor * (home_actual - home_expected)
         away_change = k_factor * (away_actual - away_expected)
         
-        ratings[home_team] += home_change
-        ratings[away_team] += away_change
+        ratings[home_team_id] += home_change
+        ratings[away_team_id] += away_change
         
-        # Store rating for this week
-        home_rating = TeamRating(
-            team_id=home_team,
-            season=season,
-            week=game.week,
-            league=league,
-            elo_rating=ratings[home_team],
-            created_at=date.today()
-        )
-        away_rating = TeamRating(
-            team_id=away_team,
-            season=season,
-            week=game.week,
-            league=league,
-            elo_rating=ratings[away_team],
-            created_at=date.today()
-        )
+        team_games_count[home_team_id] += 1
+        team_games_count[away_team_id] += 1
+    
+    # Create TeamRating objects for all teams
+    result = []
+    as_of_date = date.today()
+    
+    for team_id, rating in ratings.items():
+        team_abbr, team_name = team_info.get(team_id, (team_id.replace(f"{league}_", ""), None))
+        games_count = team_games_count.get(team_id, 0)
         
-        session.merge(home_rating)
-        session.merge(away_rating)
+        team_rating = TeamRating(
+            league=league,
+            season=season,
+            team_id=team_id,
+            team_abbr=team_abbr,
+            team_name=team_name,
+            rating=rating,
+            as_of_date=as_of_date,
+            games_count=games_count,
+            created_at=date.today(),
+            updated_at=date.today()
+        )
+        result.append(team_rating)
     
-    session.commit()
-    logger.info(f"Elo ratings computed for {len(ratings)} teams")
+    logger.info(f"Computed Elo ratings for {len(result)} teams")
     
-    return ratings
+    return result
 
 
 def compute_srs_ratings(

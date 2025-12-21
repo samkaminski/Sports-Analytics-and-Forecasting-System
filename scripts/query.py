@@ -32,7 +32,7 @@ from tabulate import tabulate
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data.database import get_db_connection, Game, Team
+from src.data.database import get_db_connection, Game, Team, TeamRating
 
 # Configure logging
 logging.basicConfig(
@@ -150,6 +150,109 @@ def games(league, season, week, format):
                     ])
                 
                 headers = ['Week', 'Date', 'Matchup', 'Score', 'Stadium']
+                click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
+        
+    except Exception as e:
+        logger.error(f"Query failed: {e}", exc_info=True)
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    '--league',
+    type=click.Choice(['NFL', 'NCAA'], case_sensitive=False),
+    required=True,
+    help='League to query'
+)
+@click.option(
+    '--season',
+    type=int,
+    required=True,
+    help='Season year'
+)
+@click.option(
+    '--team',
+    type=str,
+    help='Team abbreviation (e.g., KC, BUF) - if provided, shows only that team'
+)
+@click.option(
+    '--top',
+    type=int,
+    default=10,
+    help='Number of top teams to show if --team not provided (default: 10)'
+)
+def ratings(league, season, team, top):
+    """
+    Query team ratings from database.
+    
+    Examples:
+        python scripts/query.py ratings --league NFL --season 2023
+        python scripts/query.py ratings --league NFL --season 2023 --team KC
+    """
+    league = league.upper()
+    
+    try:
+        db = get_db_connection()
+        
+        with db.get_session() as session:
+            # Build query
+            stmt = select(TeamRating).where(
+                TeamRating.league == league,
+                TeamRating.season == season
+            )
+            
+            if team:
+                # Filter by team abbreviation
+                team_abbr = team.upper()
+                stmt = stmt.where(TeamRating.team_abbr == team_abbr)
+            
+            stmt = stmt.order_by(TeamRating.rating.desc())
+            
+            ratings_list = list(session.scalars(stmt).all())
+            
+            if not ratings_list:
+                click.echo(f"No ratings found for {league} season {season}" + (f" team {team}" if team else ""))
+                return
+            
+            # Display results
+            if team:
+                # Single team view
+                rating = ratings_list[0]
+                click.echo("=" * 70)
+                click.echo(f"Team Rating: {rating.team_abbr} ({rating.team_name or 'N/A'})")
+                click.echo(f"League: {league} | Season: {season}")
+                click.echo("-" * 70)
+                click.echo(f"Elo Rating: {rating.rating:.1f}")
+                click.echo(f"Games Played: {rating.games_count}")
+                click.echo(f"As of Date: {rating.as_of_date}")
+                
+                # Find ranking position
+                all_ratings_stmt = select(TeamRating).where(
+                    TeamRating.league == league,
+                    TeamRating.season == season
+                ).order_by(TeamRating.rating.desc())
+                all_ratings = list(session.scalars(all_ratings_stmt).all())
+                rank = next((i + 1 for i, r in enumerate(all_ratings) if r.team_id == rating.team_id), None)
+                if rank:
+                    click.echo(f"Rank: #{rank} of {len(all_ratings)}")
+                click.echo("=" * 70)
+            else:
+                # Top N teams table
+                ratings_to_show = ratings_list[:top]
+                table_data = []
+                for i, rating in enumerate(ratings_to_show, 1):
+                    table_data.append([
+                        i,
+                        rating.team_abbr,
+                        rating.team_name or 'N/A',
+                        f"{rating.rating:.1f}",
+                        rating.games_count
+                    ])
+                
+                headers = ['Rank', 'Team', 'Name', 'Rating', 'Games']
+                click.echo(f"Top {len(ratings_to_show)} Teams by Elo Rating: {league} Season {season}")
+                click.echo("")
                 click.echo(tabulate(table_data, headers=headers, tablefmt='grid'))
         
     except Exception as e:
