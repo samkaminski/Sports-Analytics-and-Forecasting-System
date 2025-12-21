@@ -5,11 +5,11 @@ Phase 0: Data Ingestion and Storage
 USE: Provides database connection management and schema creation utilities
 WHAT WILL BE BUILT: 
   - DatabaseManager class for connection pooling and query execution
-  - Database schema creation functions
+  - Database schema creation functions (SQLAlchemy 2.x style)
   - Helper functions for common database operations
 
 HOW IT WORKS:
-  - Uses SQLAlchemy for ORM and connection management
+  - Uses SQLAlchemy 2.x for ORM and connection management
   - Provides context managers for safe database connections
   - Handles schema creation and migrations
   - Manages connection pooling for efficient data loading
@@ -23,18 +23,20 @@ FITS IN PROJECT:
 
 import os
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
-import yaml
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, Date, Boolean, Text, ForeignKey, Index, UniqueConstraint
-from sqlalchemy.orm import sessionmaker, Session
+from typing import Optional, Dict
+from datetime import date
+from sqlalchemy import create_engine, Index, ForeignKey
+from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import QueuePool
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
 logger = logging.getLogger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """Base class for all database models (SQLAlchemy 2.x style)."""
+    pass
 
 
 class DatabaseManager:
@@ -48,41 +50,29 @@ class DatabaseManager:
     - Error handling and logging
     """
     
-    def __init__(self, config_path: str = "config/database_config.yaml"):
+    def __init__(self, database_url: Optional[str] = None):
         """
-        Initialize database manager with configuration.
+        Initialize database manager with DATABASE_URL environment variable.
         
         Args:
-            config_path: Path to database configuration YAML file
+            database_url: Optional database URL (defaults to DATABASE_URL env var)
         """
-        self.config = self._load_config(config_path)
+        self.database_url = database_url or os.getenv('DATABASE_URL')
+        if not self.database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
+        
         self.engine = None
         self.SessionLocal = None
         self._initialize_engine()
     
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load database configuration from YAML file."""
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        return config['database']
-    
     def _initialize_engine(self):
         """Create SQLAlchemy engine with connection pooling."""
-        # Build connection string
-        # In production, get password from environment variable
-        password = os.getenv('DB_PASSWORD', self.config.get('password', ''))
-        
-        connection_string = (
-            f"postgresql://{self.config['user']}:{password}@"
-            f"{self.config['host']}:{self.config['port']}/{self.config['name']}"
-        )
-        
         # Create engine with connection pooling
         self.engine = create_engine(
-            connection_string,
+            self.database_url,
             poolclass=QueuePool,
-            pool_size=self.config.get('pool_size', 5),
-            max_overflow=self.config.get('max_overflow', 10),
+            pool_size=5,
+            max_overflow=10,
             echo=False  # Set to True for SQL query logging
         )
         
@@ -144,7 +134,7 @@ class DatabaseManager:
             return result.fetchall()
 
 
-def get_db_connection(config_path: str = "config/database_config.yaml"):
+def get_db_connection(database_url: Optional[str] = None):
     """
     Convenience function to get a database manager instance.
     
@@ -153,26 +143,23 @@ def get_db_connection(config_path: str = "config/database_config.yaml"):
         with db.get_session() as session:
             # Use session
     """
-    return DatabaseManager(config_path)
+    return DatabaseManager(database_url)
 
 
-# Database Schema Definitions
-# These tables store all the data needed for modeling
+# Database Schema Definitions (Task #1: Minimal - teams and games only)
 
 class Team(Base):
     """
     Teams table - stores basic team information.
-    
-    Used by: All modules that need to reference teams
     """
     __tablename__ = 'teams'
     
-    team_id = Column(String(50), primary_key=True)
-    name = Column(String(100), nullable=False)
-    league = Column(String(10), nullable=False)  # 'NFL' or 'NCAA'
-    abbreviation = Column(String(10))
-    city = Column(String(50))
-    created_at = Column(Date)
+    team_id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    league: Mapped[str]  # 'NFL' or 'NCAA'
+    abbreviation: Mapped[Optional[str]] = mapped_column(default=None)
+    city: Mapped[Optional[str]] = mapped_column(default=None)
+    created_at: Mapped[Optional[date]] = mapped_column(default=None)
     
     __table_args__ = (
         Index('idx_team_league', 'league'),
@@ -182,134 +169,33 @@ class Team(Base):
 class Game(Base):
     """
     Games table - stores game results and metadata.
-    
-    Used by: Feature engineering (to get historical games),
-             Model training (as target variables),
-             Prediction (to identify upcoming games)
     """
     __tablename__ = 'games'
     
-    game_id = Column(String(50), primary_key=True)
-    season = Column(Integer, nullable=False)
-    week = Column(Integer, nullable=False)
-    date = Column(Date, nullable=False)
-    home_team_id = Column(String(50), ForeignKey('teams.team_id'), nullable=False)
-    away_team_id = Column(String(50), ForeignKey('teams.team_id'), nullable=False)
-    league = Column(String(10), nullable=False)
+    game_id: Mapped[str] = mapped_column(primary_key=True)
+    season: Mapped[int]
+    week: Mapped[int]
+    date: Mapped[date]
+    home_team_id: Mapped[str] = mapped_column(ForeignKey('teams.team_id'))
+    away_team_id: Mapped[str] = mapped_column(ForeignKey('teams.team_id'))
+    league: Mapped[str]
     
     # Game results (NULL for upcoming games)
-    home_score = Column(Integer)
-    away_score = Column(Integer)
-    completed = Column(Boolean, default=False)
+    home_score: Mapped[Optional[int]] = mapped_column(default=None)
+    away_score: Mapped[Optional[int]] = mapped_column(default=None)
+    completed: Mapped[bool] = mapped_column(default=False)
     
     # Metadata
-    stadium = Column(String(100))
-    is_neutral_site = Column(Boolean, default=False)
+    stadium: Mapped[Optional[str]] = mapped_column(default=None)
+    is_neutral_site: Mapped[bool] = mapped_column(default=False)
     
-    created_at = Column(Date)
-    updated_at = Column(Date)
+    created_at: Mapped[Optional[date]] = mapped_column(default=None)
+    updated_at: Mapped[Optional[date]] = mapped_column(default=None)
     
     __table_args__ = (
         Index('idx_game_season_week', 'season', 'week'),
         Index('idx_game_date', 'date'),
         Index('idx_game_league', 'league'),
-    )
-
-
-class TeamStats(Base):
-    """
-    Team statistics table - stores aggregated team stats by season/week.
-    
-    Used by: Feature engineering (to compute team strength metrics),
-             Model training (as features)
-    """
-    __tablename__ = 'team_stats'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    team_id = Column(String(50), ForeignKey('teams.team_id'), nullable=False)
-    season = Column(Integer, nullable=False)
-    week = Column(Integer, nullable=False)  # Week of season (0 = preseason)
-    league = Column(String(10), nullable=False)
-    
-    # Offensive stats
-    points_for = Column(Float)
-    points_against = Column(Float)
-    point_differential = Column(Float)
-    yards_for = Column(Float)
-    yards_against = Column(Float)
-    
-    # Efficiency metrics (computed in feature engineering)
-    offensive_efficiency = Column(Float)
-    defensive_efficiency = Column(Float)
-    
-    # Rolling averages (computed)
-    points_for_avg = Column(Float)  # Rolling average
-    points_against_avg = Column(Float)
-    point_diff_avg = Column(Float)
-    
-    created_at = Column(Date)
-    
-    __table_args__ = (
-        Index('idx_team_stats_team_season_week', 'team_id', 'season', 'week'),
-        Index('idx_team_stats_season_week', 'season', 'week'),
-    )
-
-
-class TeamRating(Base):
-    """
-    Team ratings table - stores Elo, SRS, or other rating systems.
-    
-    Used by: Feature engineering (rating difference is a key Phase 1 feature),
-             Model training (as primary feature)
-    """
-    __tablename__ = 'team_ratings'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    team_id = Column(String(50), ForeignKey('teams.team_id'), nullable=False)
-    season = Column(Integer, nullable=False)
-    week = Column(Integer, nullable=False)
-    league = Column(String(10), nullable=False)
-    
-    # Rating systems
-    elo_rating = Column(Float)  # Elo rating
-    srs_rating = Column(Float)  # Simple Rating System
-    
-    created_at = Column(Date)
-    
-    __table_args__ = (
-        Index('idx_rating_team_season_week', 'team_id', 'season', 'week'),
-        UniqueConstraint('team_id', 'season', 'week', name='uq_rating_team_season_week'),
-    )
-
-
-class BettingOdds(Base):
-    """
-    Betting odds table - stores sportsbook lines and odds.
-    
-    Used by: Phase 3 (market comparison), not used in Phase 1 model training
-             (to avoid circular reasoning - we want to beat the market, not copy it)
-    """
-    __tablename__ = 'betting_odds'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    game_id = Column(String(50), ForeignKey('games.game_id'), nullable=False)
-    
-    # Line information
-    spread = Column(Float)  # Point spread (negative = favorite)
-    total = Column(Float)  # Over/under total
-    home_moneyline = Column(Integer)  # American odds format
-    away_moneyline = Column(Integer)
-    
-    # Line metadata
-    sportsbook = Column(String(50))  # Which book (e.g., 'consensus', 'draftkings')
-    line_type = Column(String(20))  # 'opening', 'closing', 'current'
-    timestamp = Column(Date)
-    
-    created_at = Column(Date)
-    
-    __table_args__ = (
-        Index('idx_odds_game', 'game_id'),
-        Index('idx_odds_timestamp', 'timestamp'),
     )
 
 

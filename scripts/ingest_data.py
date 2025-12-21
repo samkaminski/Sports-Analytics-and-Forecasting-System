@@ -36,8 +36,6 @@ sys.path.insert(0, str(project_root))
 
 from src.data.database import get_db_connection, DatabaseManager
 from src.data.nfl_ingestion import NFLDataIngester
-from src.data.ncaa_ingestion import NCAADataIngester
-from src.data.odds_ingestion import OddsIngester
 
 # Configure logging
 logging.basicConfig(
@@ -56,53 +54,31 @@ def cli():
 @cli.command()
 @click.option(
     '--league',
-    type=click.Choice(['NFL', 'NCAA'], case_sensitive=False),
+    type=click.Choice(['NFL'], case_sensitive=False),
     required=True,
-    help='League to ingest data for'
-)
-@click.option(
-    '--historical',
-    is_flag=True,
-    help='Ingest historical data (multiple seasons)'
-)
-@click.option(
-    '--start-season',
-    type=int,
-    help='First season to ingest (for historical mode)'
-)
-@click.option(
-    '--end-season',
-    type=int,
-    help='Last season to ingest (for historical mode)'
-)
-@click.option(
-    '--current',
-    is_flag=True,
-    help='Update current season data'
+    help='League to ingest data for (NFL only for Task #1)'
 )
 @click.option(
     '--season',
     type=int,
-    help='Season to update (for current mode)'
+    required=True,
+    help='Season year to ingest'
 )
 @click.option(
     '--week',
     type=int,
-    help='Week to update (optional, for current mode)'
+    help='Optional week number (ingests all weeks if not specified)'
 )
-def ingest(league, historical, start_season, end_season, current, season, week):
+def ingest(league, season, week):
     """
-    Ingest game and team statistics data.
+    Ingest NFL game data for a season/week.
     
     Examples:
-        # Ingest historical NFL data
-        python scripts/ingest_data.py ingest --league NFL --historical --start-season 2018 --end-season 2023
+        # Ingest all weeks for 2023 season
+        python scripts/ingest_data.py ingest --league NFL --season 2023
         
-        # Update current NFL season
-        python scripts/ingest_data.py ingest --league NFL --current --season 2024
-        
-        # Update specific week
-        python scripts/ingest_data.py ingest --league NFL --current --season 2024 --week 12
+        # Ingest specific week
+        python scripts/ingest_data.py ingest --league NFL --season 2023 --week 1
     """
     league = league.upper()
     
@@ -111,63 +87,15 @@ def ingest(league, historical, start_season, end_season, current, season, week):
         
         if league == 'NFL':
             ingester = NFLDataIngester(db)
+            ingester.ingest_season(season, week)
         else:
-            ingester = NCAADataIngester(db)
-        
-        if historical:
-            if not start_season or not end_season:
-                click.echo("Error: --start-season and --end-season required for historical mode", err=True)
-                sys.exit(1)
-            
-            click.echo(f"Ingesting historical {league} data: {start_season}-{end_season}")
-            ingester.ingest_historical_data(start_season, end_season)
-        
-        elif current:
-            if not season:
-                season = datetime.now().year
-            
-            click.echo(f"Updating {league} data for season {season}, week {week or 'all'}")
-            ingester.update_current_season(season, week)
-        
-        else:
-            click.echo("Error: Must specify --historical or --current", err=True)
+            click.echo("Error: Only NFL supported in Task #1", err=True)
             sys.exit(1)
         
         click.echo("Data ingestion completed successfully!")
         
     except Exception as e:
         logger.error(f"Ingestion failed: {e}", exc_info=True)
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
-@cli.command()
-@click.option(
-    '--league',
-    type=click.Choice(['NFL', 'NCAA'], case_sensitive=False),
-    required=True,
-    help='League to fetch odds for'
-)
-def ingest_odds(league):
-    """
-    Ingest current betting odds.
-    
-    Example:
-        python scripts/ingest_data.py ingest-odds --league NFL
-    """
-    league = league.upper()
-    
-    try:
-        db = get_db_connection()
-        ingester = OddsIngester(db)
-        
-        click.echo(f"Fetching current odds for {league}...")
-        ingester.update_current_odds(league)
-        
-        click.echo("Odds ingestion completed successfully!")
-        
-    except Exception as e:
-        logger.error(f"Odds ingestion failed: {e}", exc_info=True)
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
