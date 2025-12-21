@@ -199,4 +199,36 @@ class Game(Base):
     )
 
 
+class TeamStats(Base):
+    """
+    Team statistics table - stores aggregated team stats by season.
+    
+    Used by: Feature engineering (to compute team strength metrics),
+             Model training (as features)
+    """
+    __tablename__ = 'team_stats'
+    
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(ForeignKey('teams.team_id'))
+    league: Mapped[str]
+    season: Mapped[int]
+    team_abbr: Mapped[str]
+    
+    # Basic stats
+    games_played: Mapped[Optional[int]] = mapped_column(default=None)
+    wins: Mapped[Optional[int]] = mapped_column(default=None)
+    losses: Mapped[Optional[int]] = mapped_column(default=None)
+    points_for: Mapped[Optional[int]] = mapped_column(default=None)
+    points_against: Mapped[Optional[int]] = mapped_column(default=None)
+    
+    created_at: Mapped[Optional[date]] = mapped_column(default=None)
+    updated_at: Mapped[Optional[date]] = mapped_column(default=None)
+    
+    __table_args__ = (
+        Index('idx_team_stats_team_season', 'team_id', 'season'),
+        Index('idx_team_stats_season', 'season'),
+        Index('idx_team_stats_league_season', 'league', 'season'),
+    )
+
+
 

@@ -32,7 +32,7 @@ import pandas as pd
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 
-from .database import DatabaseManager, Team, Game
+from .database import DatabaseManager, Team, Game, TeamStats
 
 logger = logging.getLogger(__name__)
 
@@ -140,23 +140,96 @@ class NFLDataIngester:
             logger.error(f"Error fetching NFL games: {e}")
             return pd.DataFrame()
     
-    def fetch_team_stats(self, season: int, week: Optional[int] = None) -> pd.DataFrame:
+    def compute_team_stats(self, season: int) -> pd.DataFrame:
         """
-        Fetch team statistics for a season/week.
+        Compute team statistics for a season by aggregating from games table.
         
         Args:
             season: NFL season year
-            week: Optional week number (None = season totals)
         
         Returns:
             DataFrame with team statistics
+        
+        Raises:
+            Exception: If computation fails or no completed games found
         """
-        logger.info(f"Fetching NFL team stats for season {season}, week {week}")
+        logger.info(f"Computing NFL team stats for season {season} from games table")
         
-        # TODO: Implement actual data fetching
-        # This would fetch from Pro-Football-Reference or nflfastR
-        
-        return pd.DataFrame()
+        with self.db.get_session() as session:
+            from sqlalchemy import select
+            
+            # Query all completed games for this season
+            stmt = select(Game).where(
+                Game.league == 'NFL',
+                Game.season == season,
+                Game.completed == True,
+                Game.home_score.isnot(None),
+                Game.away_score.isnot(None)
+            )
+            
+            games = session.scalars(stmt).all()
+            
+            if not games:
+                raise ValueError(f"No completed games found for NFL season {season}. Ingest games first.")
+            
+            # Aggregate stats per team
+            team_stats_dict = {}
+            
+            for game in games:
+                # Process home team
+                if game.home_team_id not in team_stats_dict:
+                    team_stats_dict[game.home_team_id] = {
+                        'team_id': game.home_team_id,
+                        'league': 'NFL',
+                        'season': season,
+                        'team_abbr': game.home_team_id.replace('NFL_', ''),
+                        'games_played': 0,
+                        'wins': 0,
+                        'losses': 0,
+                        'points_for': 0,
+                        'points_against': 0
+                    }
+                
+                home_stats = team_stats_dict[game.home_team_id]
+                home_stats['games_played'] += 1
+                home_stats['points_for'] += game.home_score
+                home_stats['points_against'] += game.away_score
+                if game.home_score > game.away_score:
+                    home_stats['wins'] += 1
+                elif game.home_score < game.away_score:
+                    home_stats['losses'] += 1
+                
+                # Process away team
+                if game.away_team_id not in team_stats_dict:
+                    team_stats_dict[game.away_team_id] = {
+                        'team_id': game.away_team_id,
+                        'league': 'NFL',
+                        'season': season,
+                        'team_abbr': game.away_team_id.replace('NFL_', ''),
+                        'games_played': 0,
+                        'wins': 0,
+                        'losses': 0,
+                        'points_for': 0,
+                        'points_against': 0
+                    }
+                
+                away_stats = team_stats_dict[game.away_team_id]
+                away_stats['games_played'] += 1
+                away_stats['points_for'] += game.away_score
+                away_stats['points_against'] += game.home_score
+                if game.away_score > game.home_score:
+                    away_stats['wins'] += 1
+                elif game.away_score < game.home_score:
+                    away_stats['losses'] += 1
+            
+            if not team_stats_dict:
+                raise ValueError(f"No team stats computed for NFL season {season}")
+            
+            # Convert to DataFrame
+            stats_list = list(team_stats_dict.values())
+            logger.info(f"Computed stats for {len(stats_list)} teams")
+            
+            return pd.DataFrame(stats_list)
     
     def _ensure_team(self, session, team_id: str, team_abbr: str, team_name: str):
         """Ensure team exists in database (idempotent)."""
@@ -252,13 +325,73 @@ class NFLDataIngester:
             session.commit()
             logger.info("Games ingestion completed")
     
-    def ingest_season(self, season: int, week: Optional[int] = None):
+    def ingest_team_stats(self, stats_df: pd.DataFrame):
+        """
+        Insert team statistics into database (idempotent - no duplicates).
+        
+        Args:
+            stats_df: DataFrame with team statistics
+        """
+        if stats_df.empty:
+            logger.warning("No team stats to ingest")
+            return
+        
+        logger.info(f"Ingesting team stats for {len(stats_df)} teams")
+        
+        with self.db.get_session() as session:
+            for _, row in stats_df.iterrows():
+                try:
+                    # Check if stats exist
+                    from sqlalchemy import select
+                    stmt = select(TeamStats).where(
+                        TeamStats.team_id == row['team_id'],
+                        TeamStats.season == row['season'],
+                        TeamStats.league == row['league']
+                    )
+                    existing = session.scalar(stmt)
+                    
+                    if existing:
+                        # Update existing
+                        existing.team_abbr = row['team_abbr']
+                        existing.games_played = row.get('games_played')
+                        existing.wins = row.get('wins')
+                        existing.losses = row.get('losses')
+                        existing.points_for = row.get('points_for')
+                        existing.points_against = row.get('points_against')
+                        existing.updated_at = date.today()
+                    else:
+                        # Insert new
+                        team_stats = TeamStats(
+                            team_id=row['team_id'],
+                            league=row['league'],
+                            season=row['season'],
+                            team_abbr=row['team_abbr'],
+                            games_played=row.get('games_played'),
+                            wins=row.get('wins'),
+                            losses=row.get('losses'),
+                            points_for=row.get('points_for'),
+                            points_against=row.get('points_against'),
+                            created_at=date.today(),
+                            updated_at=date.today()
+                        )
+                        session.add(team_stats)
+                    
+                except Exception as e:
+                    logger.error(f"Error ingesting team stats for {row.get('team_id')}: {e}")
+                    session.rollback()
+                    continue
+            
+            session.commit()
+            logger.info("Team stats ingestion completed")
+    
+    def ingest_season(self, season: int, week: Optional[int] = None, include_stats: bool = False):
         """
         Ingest NFL games for a season/week.
         
         Args:
             season: NFL season year
             week: Optional week number (None = all weeks)
+            include_stats: If True, also ingest team stats for the season
         """
         logger.info(f"Ingesting NFL games for season {season}, week {week}")
         
@@ -267,4 +400,15 @@ class NFLDataIngester:
             self.ingest_games(games_df)
         else:
             logger.warning(f"No games found for season {season}, week {week}")
-
+        
+        # Ingest team stats if requested (season-level only, not week-specific)
+        if include_stats:
+            try:
+                stats_df = self.compute_team_stats(season)
+                if not stats_df.empty:
+                    self.ingest_team_stats(stats_df)
+                else:
+                    logger.warning(f"No team stats computed for season {season}")
+            except Exception as e:
+                logger.error(f"Failed to compute/ingest team stats for season {season}: {e}")
+                raise

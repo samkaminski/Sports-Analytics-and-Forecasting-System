@@ -69,7 +69,12 @@ def cli():
     type=int,
     help='Optional week number (ingests all weeks if not specified)'
 )
-def ingest(league, season, week):
+@click.option(
+    '--stats',
+    is_flag=True,
+    help='Also ingest team statistics for the season'
+)
+def ingest(league, season, week, stats):
     """
     Ingest NFL game data for a season/week.
     
@@ -79,6 +84,9 @@ def ingest(league, season, week):
         
         # Ingest specific week
         python scripts/ingest_data.py ingest --league NFL --season 2023 --week 1
+        
+        # Ingest games and team stats
+        python scripts/ingest_data.py ingest --league NFL --season 2023 --stats
     """
     league = league.upper()
     
@@ -87,9 +95,9 @@ def ingest(league, season, week):
         
         if league == 'NFL':
             ingester = NFLDataIngester(db)
-            ingester.ingest_season(season, week)
+            ingester.ingest_season(season, week, include_stats=stats)
         else:
-            click.echo("Error: Only NFL supported in Task #1", err=True)
+            click.echo("Error: Only NFL supported", err=True)
             sys.exit(1)
         
         click.echo("Data ingestion completed successfully!")
