@@ -79,6 +79,18 @@ class NFLDataIngester:
             if df.empty:
                 return pd.DataFrame()
             
+            # Filter out future games (only include games on or before today)
+            today = date.today()
+            if 'gameday' in df.columns:
+                # Convert gameday to date if it's not already
+                df['gameday_date'] = pd.to_datetime(df['gameday'], errors='coerce').dt.date
+                # Filter to only include games on or before today
+                df = df[df['gameday_date'] < today].copy()
+                df = df.drop(columns=['gameday_date'], errors='ignore')
+            
+            if df.empty:
+                return pd.DataFrame()
+            
             # Filter by week if specified
             if week is not None:
                 df = df[df["week"] == week].copy()
@@ -104,14 +116,24 @@ class NFLDataIngester:
                     except:
                         pass
                 
-                # Get scores
+                # Get scores - handle NaN for future/unplayed games
                 home_score = None
                 away_score = None
                 completed = False
-                if pd.notna(row.get('home_score')):
-                    home_score = int(row['home_score'])
-                    away_score = int(row.get('away_score', 0))
+                
+                # Only mark as completed if both scores are present and not NaN
+                home_score_val = row.get('home_score')
+                away_score_val = row.get('away_score')
+                
+                if pd.notna(home_score_val) and pd.notna(away_score_val):
+                    home_score = int(home_score_val)
+                    away_score = int(away_score_val)
                     completed = True
+                else:
+                    # Ensure None (not NaN) for unplayed games
+                    home_score = None
+                    away_score = None
+                    completed = False
                 
                 games.append({
                     'game_id': game_id,
@@ -148,10 +170,7 @@ class NFLDataIngester:
             season: NFL season year
         
         Returns:
-            DataFrame with team statistics
-        
-        Raises:
-            Exception: If computation fails or no completed games found
+            DataFrame with team statistics (empty if no completed games)
         """
         logger.info(f"Computing NFL team stats for season {season} from games table")
         
@@ -170,7 +189,8 @@ class NFLDataIngester:
             games = session.scalars(stmt).all()
             
             if not games:
-                raise ValueError(f"No completed games found for NFL season {season}. Ingest games first.")
+                logger.warning(f"No completed games yet for season {season}; skipping stats.")
+                return pd.DataFrame()
             
             # Aggregate stats per team
             team_stats_dict = {}
@@ -223,7 +243,8 @@ class NFLDataIngester:
                     away_stats['losses'] += 1
             
             if not team_stats_dict:
-                raise ValueError(f"No team stats computed for NFL season {season}")
+                logger.warning(f"No team stats computed for season {season}")
+                return pd.DataFrame()
             
             # Convert to DataFrame
             stats_list = list(team_stats_dict.values())
