@@ -412,3 +412,38 @@ class NFLDataIngester:
             except Exception as e:
                 logger.error(f"Failed to compute/ingest team stats for season {season}: {e}")
                 raise
+    
+    def ingest_historical(self, start_season: int, end_season: int, include_stats: bool = False):
+        """
+        Ingest NFL games for multiple seasons (historical ingestion).
+        
+        Args:
+            start_season: First season year (inclusive)
+            end_season: Last season year (inclusive)
+            include_stats: If True, also compute and ingest team stats for each season
+        """
+        logger.info(f"Ingesting historical NFL data: {start_season}-{end_season}")
+        
+        for season in range(start_season, end_season + 1):
+            logger.info(f"Processing season {season}...")
+            try:
+                # Ingest games for this season (all weeks)
+                self.ingest_season(season, week=None, include_stats=False)
+                
+                # Compute team stats if requested
+                if include_stats:
+                    try:
+                        stats_df = self.compute_team_stats(season)
+                        if not stats_df.empty:
+                            self.ingest_team_stats(stats_df)
+                    except Exception as e:
+                        logger.warning(f"Failed to compute team stats for season {season}: {e}")
+                        # Continue with next season even if stats fail
+                        continue
+                
+            except Exception as e:
+                logger.error(f"Error ingesting season {season}: {e}")
+                # Continue with next season even if one fails
+                continue
+        
+        logger.info(f"Historical ingestion completed: {start_season}-{end_season}")

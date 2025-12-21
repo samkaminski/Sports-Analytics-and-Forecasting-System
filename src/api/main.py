@@ -16,7 +16,7 @@ from datetime import date
 from pydantic import BaseModel
 
 from .dependencies import get_db_session
-from src.data.database import Game, Team
+from src.data.database import Game, Team, TeamStats
 
 app = FastAPI(
     title="Sports Betting Analytics API",
@@ -103,6 +103,70 @@ def get_games(
             game_dict["away_team_name"] = away_team.name
         
         result.append(GameResponse(**game_dict))
+    
+    return result
+
+
+class TeamStatsResponse(BaseModel):
+    """Team statistics response model."""
+    team_id: str
+    team_abbr: str
+    team_name: Optional[str] = None
+    league: str
+    season: int
+    games_played: Optional[int] = None
+    wins: Optional[int] = None
+    losses: Optional[int] = None
+    points_for: Optional[int] = None
+    points_against: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
+
+
+@app.get("/stats/teams", response_model=List[TeamStatsResponse])
+def get_team_stats(
+    league: str = Query(..., description="League (NFL or NCAA)"),
+    season: int = Query(..., description="Season year"),
+    session: Session = Depends(get_db_session)
+):
+    """
+    Get team statistics for a league and season.
+    
+    Example:
+        GET /stats/teams?league=NFL&season=2023
+    """
+    stmt = select(TeamStats).where(
+        TeamStats.league == league.upper(),
+        TeamStats.season == season
+    ).order_by(TeamStats.team_abbr)
+    
+    team_stats = session.scalars(stmt).all()
+    
+    if not team_stats:
+        return []
+    
+    # Enrich with team names
+    result = []
+    for stats in team_stats:
+        team = session.scalar(select(Team).where(Team.team_id == stats.team_id))
+        
+        stats_dict = {
+            "team_id": stats.team_id,
+            "team_abbr": stats.team_abbr,
+            "league": stats.league,
+            "season": stats.season,
+            "games_played": stats.games_played,
+            "wins": stats.wins,
+            "losses": stats.losses,
+            "points_for": stats.points_for,
+            "points_against": stats.points_against,
+        }
+        
+        if team:
+            stats_dict["team_name"] = team.name
+        
+        result.append(TeamStatsResponse(**stats_dict))
     
     return result
 

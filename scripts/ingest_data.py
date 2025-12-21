@@ -56,13 +56,12 @@ def cli():
     '--league',
     type=click.Choice(['NFL'], case_sensitive=False),
     required=True,
-    help='League to ingest data for (NFL only for Task #1)'
+    help='League to ingest data for'
 )
 @click.option(
     '--season',
     type=int,
-    required=True,
-    help='Season year to ingest'
+    help='Season year to ingest (use with --historical for single season)'
 )
 @click.option(
     '--week',
@@ -72,11 +71,26 @@ def cli():
 @click.option(
     '--stats',
     is_flag=True,
-    help='Also ingest team statistics for the season'
+    help='Also ingest team statistics for the season(s)'
 )
-def ingest(league, season, week, stats):
+@click.option(
+    '--historical',
+    is_flag=True,
+    help='Ingest historical data for multiple seasons'
+)
+@click.option(
+    '--start-season',
+    type=int,
+    help='First season to ingest (required for --historical)'
+)
+@click.option(
+    '--end-season',
+    type=int,
+    help='Last season to ingest (required for --historical)'
+)
+def ingest(league, season, week, stats, historical, start_season, end_season):
     """
-    Ingest NFL game data for a season/week.
+    Ingest NFL game data for a season/week or historical range.
     
     Examples:
         # Ingest all weeks for 2023 season
@@ -87,18 +101,38 @@ def ingest(league, season, week, stats):
         
         # Ingest games and team stats
         python scripts/ingest_data.py ingest --league NFL --season 2023 --stats
+        
+        # Ingest historical range with stats
+        python scripts/ingest_data.py ingest --league NFL --historical --start-season 2020 --end-season 2023 --stats
     """
     league = league.upper()
     
     try:
         db = get_db_connection()
         
-        if league == 'NFL':
-            ingester = NFLDataIngester(db)
-            ingester.ingest_season(season, week, include_stats=stats)
-        else:
+        if league != 'NFL':
             click.echo("Error: Only NFL supported", err=True)
             sys.exit(1)
+        
+        ingester = NFLDataIngester(db)
+        
+        if historical:
+            if not start_season or not end_season:
+                click.echo("Error: --start-season and --end-season required for --historical", err=True)
+                sys.exit(1)
+            
+            if start_season > end_season:
+                click.echo("Error: --start-season must be <= --end-season", err=True)
+                sys.exit(1)
+            
+            click.echo(f"Ingesting historical NFL data: {start_season}-{end_season}")
+            ingester.ingest_historical(start_season, end_season, include_stats=stats)
+        else:
+            if not season:
+                click.echo("Error: --season required (or use --historical)", err=True)
+                sys.exit(1)
+            
+            ingester.ingest_season(season, week, include_stats=stats)
         
         click.echo("Data ingestion completed successfully!")
         
