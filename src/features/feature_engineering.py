@@ -257,16 +257,23 @@ def compute_game_features(
 
 def compute_game_features_by_id(
     session: Session,
-    game_id: str
+    game_id: str,
+    as_of_date: Optional[date] = None
 ) -> Dict[str, float]:
     """
     Compute features for a single game by game_id (Task #5).
     
-    Ensures no data leakage by using only data available before the game date.
+    Supports two modes:
+    - Training/backtest mode (as_of_date=None): Uses on-the-fly Elo computation
+      with only games before the game date (no data leakage).
+    - Prediction mode (as_of_date provided): Uses latest available ratings from
+      team_ratings table with as_of_date <= provided date.
     
     Args:
         session: Database session
         game_id: Game identifier
+        as_of_date: Optional date to use for prediction-time ratings lookup.
+                   If None, uses training-safe on-the-fly computation.
     
     Returns:
         Dictionary of feature names to values
@@ -286,63 +293,88 @@ def compute_game_features_by_id(
     league = game.league
     season = game.season
     game_date = game.date
-    
-    # Compute Elo ratings on-the-fly using only games before target game (no leakage)
     base_rating = 1500.0
-    k_factor = 20.0
-    home_advantage_elo = 55.0
     
-    # Query all completed games before target game date
-    prior_games_stmt = select(Game).where(
-        Game.league == league,
-        Game.season == season,
-        Game.date < game_date,
-        Game.completed == True,
-        Game.home_score.isnot(None),
-        Game.away_score.isnot(None)
-    ).order_by(Game.date, Game.week)
+
+    # Prediction mode: use team_ratings table
+    if as_of_date is not None:
+        # Get latest available ratings with as_of_date <= provided date
+        home_rating_stmt = select(TeamRating).where(
+            TeamRating.league == league,
+            TeamRating.season == season,
+            TeamRating.team_id == game.home_team_id,
+            TeamRating.as_of_date <= as_of_date
+        ).order_by(TeamRating.as_of_date.desc(), TeamRating.id.desc()).limit(1)
+        
+        away_rating_stmt = select(TeamRating).where(
+            TeamRating.league == league,
+            TeamRating.season == season,
+            TeamRating.team_id == game.away_team_id,
+            TeamRating.as_of_date <= as_of_date
+        ).order_by(TeamRating.as_of_date.desc(), TeamRating.id.desc()).limit(1)
+        
+        home_rating_obj = session.scalar(home_rating_stmt)
+        away_rating_obj = session.scalar(away_rating_stmt)
+        
+        home_rating = home_rating_obj.rating if home_rating_obj else base_rating
+        away_rating = away_rating_obj.rating if away_rating_obj else base_rating
     
-    prior_games = list(session.scalars(prior_games_stmt).all())
-    
-    # Initialize ratings dict (all teams start at base_rating)
-    ratings = {}
-    
-    # Process prior games chronologically to build up ratings
-    for prior_game in prior_games:
-        home_team_id = prior_game.home_team_id
-        away_team_id = prior_game.away_team_id
+    # Training mode: compute Elo ratings on-the-fly using only games before target game (no leakage)
+    else:
+        k_factor = 20.0
+        home_advantage_elo = 55.0
         
-        # Initialize teams if first time seeing them
-        if home_team_id not in ratings:
-            ratings[home_team_id] = base_rating
-        if away_team_id not in ratings:
-            ratings[away_team_id] = base_rating
+        # Query all completed games before target game date
+        prior_games_stmt = select(Game).where(
+            Game.league == league,
+            Game.season == season,
+            Game.date < game_date,
+            Game.completed == True,
+            Game.home_score.isnot(None),
+            Game.away_score.isnot(None)
+        ).order_by(Game.date, Game.week)
         
-        # Calculate expected scores (with home advantage)
-        home_expected = 1.0 / (1.0 + 10.0 ** ((ratings[away_team_id] - (ratings[home_team_id] + home_advantage_elo)) / 400.0))
-        away_expected = 1.0 - home_expected
+        prior_games = list(session.scalars(prior_games_stmt).all())
         
-        # Calculate actual outcome (1.0 for win, 0.5 for tie, 0.0 for loss)
-        if prior_game.home_score > prior_game.away_score:
-            home_actual = 1.0
-            away_actual = 0.0
-        elif prior_game.home_score < prior_game.away_score:
-            home_actual = 0.0
-            away_actual = 1.0
-        else:  # Tie
-            home_actual = 0.5
-            away_actual = 0.5
+        # Initialize ratings dict (all teams start at base_rating)
+        ratings = {}
         
-        # Update ratings
-        home_change = k_factor * (home_actual - home_expected)
-        away_change = k_factor * (away_actual - away_expected)
+        # Process prior games chronologically to build up ratings
+        for prior_game in prior_games:
+            home_team_id = prior_game.home_team_id
+            away_team_id = prior_game.away_team_id
+            
+            # Initialize teams if first time seeing them
+            if home_team_id not in ratings:
+                ratings[home_team_id] = base_rating
+            if away_team_id not in ratings:
+                ratings[away_team_id] = base_rating
+            
+            # Calculate expected scores (with home advantage)
+            home_expected = 1.0 / (1.0 + 10.0 ** ((ratings[away_team_id] - (ratings[home_team_id] + home_advantage_elo)) / 400.0))
+            away_expected = 1.0 - home_expected
+            
+            # Calculate actual outcome (1.0 for win, 0.5 for tie, 0.0 for loss)
+            if prior_game.home_score > prior_game.away_score:
+                home_actual = 1.0
+                away_actual = 0.0
+            elif prior_game.home_score < prior_game.away_score:
+                home_actual = 0.0
+                away_actual = 1.0
+            else:  # Tie
+                home_actual = 0.5
+                away_actual = 0.5
+            
+            # Update ratings
+            home_change = k_factor * (home_actual - home_expected)
+            away_change = k_factor * (away_actual - away_expected)
+            
+            ratings[home_team_id] += home_change
+            ratings[away_team_id] += away_change
         
-        ratings[home_team_id] += home_change
-        ratings[away_team_id] += away_change
-    
-    # Get ratings for target game teams (fallback to base_rating if not seen yet)
-    home_rating = ratings.get(game.home_team_id, base_rating)
-    away_rating = ratings.get(game.away_team_id, base_rating)
+        # Get ratings for target game teams (fallback to base_rating if not seen yet)
+        home_rating = ratings.get(game.home_team_id, base_rating)
+        away_rating = ratings.get(game.away_team_id, base_rating)
     
     # Compute features
     rating_diff = home_rating - away_rating

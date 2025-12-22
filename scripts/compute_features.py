@@ -24,6 +24,7 @@ import sys
 import logging
 import click
 from pathlib import Path
+from datetime import date
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -47,22 +48,50 @@ logger = logging.getLogger(__name__)
     required=True,
     help='Game identifier (e.g., NFL_2023_1_KC_BAL)'
 )
-def compute(game_id):
+@click.option(
+    '--as-of',
+    type=str,
+    default=None,
+    help='Date for prediction-time ratings (e.g., "today" or "YYYY-MM-DD"). '
+         'If omitted, uses training-safe mode (on-the-fly computation).'
+)
+def compute(game_id, as_of):
     """
     Compute features for a single game.
     
-    Example:
-        python scripts/compute_features.py --game-id NFL_2023_1_KC_BAL
+    Examples:
+        # Historical game (training-safe mode)
+        python scripts/compute_features.py --game-id NFL_2023_11_BAL_CIN
+        
+        # Future game (prediction-time mode)
+        python scripts/compute_features.py --game-id NFL_2025_17_KC_DEN --as-of today
+        python scripts/compute_features.py --game-id NFL_2025_17_KC_DEN --as-of 2025-01-15
     """
     try:
+        # Parse as_of_date
+        as_of_date = None
+        if as_of:
+            if as_of.lower() == 'today':
+                as_of_date = date.today()
+            else:
+                try:
+                    as_of_date = date.fromisoformat(as_of)
+                except ValueError:
+                    click.echo(f"Error: Invalid date format '{as_of}'. Use 'today' or 'YYYY-MM-DD'.", err=True)
+                    sys.exit(1)
+        
         db = get_db_connection()
         
         with db.get_session() as session:
-            features = compute_game_features_by_id(session, game_id)
+            features = compute_game_features_by_id(session, game_id, as_of_date=as_of_date)
             
             # Display features
             click.echo("=" * 70)
             click.echo(f"Features for Game: {game_id}")
+            if as_of_date:
+                click.echo(f"Prediction Mode (as_of: {as_of_date})")
+            else:
+                click.echo("Training Mode (on-the-fly computation)")
             click.echo("=" * 70)
             click.echo("")
             

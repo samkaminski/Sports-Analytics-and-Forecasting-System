@@ -57,13 +57,14 @@ class NFLDataIngester:
         """
         self.db = db_manager
     
-    def fetch_games(self, season: int, week: Optional[int] = None) -> pd.DataFrame:
+    def fetch_games(self, season: int, week: Optional[int] = None, include_future: bool = False) -> pd.DataFrame:
         """
         Fetch NFL games for a season/week using nfl-data-py.
         
         Args:
             season: NFL season year
             week: Optional week number (None = all weeks)
+            include_future: If True, include future games (default: False, filters to games <= today)
         
         Returns:
             DataFrame with game data
@@ -79,14 +80,15 @@ class NFLDataIngester:
             if df.empty:
                 return pd.DataFrame()
             
-            # Filter out future games (only include games on or before today)
-            today = date.today()
-            if 'gameday' in df.columns:
-                # Convert gameday to date if it's not already
-                df['gameday_date'] = pd.to_datetime(df['gameday'], errors='coerce').dt.date
-                # Filter to only include games on or before today
-                df = df[df['gameday_date'] < today].copy()
-                df = df.drop(columns=['gameday_date'], errors='ignore')
+            # Filter out future games (only include games before today) unless include_future=True
+            if not include_future:
+                today = date.today()
+                if 'gameday' in df.columns:
+                    # Convert gameday to date if it's not already
+                    df['gameday_date'] = pd.to_datetime(df['gameday'], errors='coerce').dt.date
+                    # Filter to only include games before today (preserves existing behavior)
+                    df = df[df['gameday_date'] < today].copy()
+                    df = df.drop(columns=['gameday_date'], errors='ignore')
             
             if df.empty:
                 return pd.DataFrame()
@@ -301,6 +303,19 @@ class NFLDataIngester:
                         row.get('away_team_name', '')
                     )
                     
+                    # Convert NaN scores to None (handle case where DataFrame still has NaN)
+                    home_score_val = row.get('home_score')
+                    away_score_val = row.get('away_score')
+                    
+                    if pd.notna(home_score_val) and pd.notna(away_score_val):
+                        home_score = int(home_score_val)
+                        away_score = int(away_score_val)
+                        completed = True
+                    else:
+                        home_score = None
+                        away_score = None
+                        completed = False
+                    
                     # Check if game exists
                     from sqlalchemy import select
                     stmt = select(Game).where(Game.game_id == row['game_id'])
@@ -312,9 +327,9 @@ class NFLDataIngester:
                         existing.week = row['week']
                         if row.get('date'):
                             existing.date = row['date']
-                        existing.home_score = row.get('home_score')
-                        existing.away_score = row.get('away_score')
-                        existing.completed = row.get('completed', False)
+                        existing.home_score = home_score
+                        existing.away_score = away_score
+                        existing.completed = completed
                         existing.stadium = row.get('stadium')
                         existing.is_neutral_site = row.get('is_neutral_site', False)
                         existing.updated_at = date.today()
@@ -328,9 +343,9 @@ class NFLDataIngester:
                             home_team_id=row['home_team_id'],
                             away_team_id=row['away_team_id'],
                             league='NFL',
-                            home_score=row.get('home_score'),
-                            away_score=row.get('away_score'),
-                            completed=row.get('completed', False),
+                            home_score=home_score,
+                            away_score=away_score,
+                            completed=completed,
                             stadium=row.get('stadium'),
                             is_neutral_site=row.get('is_neutral_site', False),
                             created_at=date.today(),

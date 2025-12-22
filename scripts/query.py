@@ -72,15 +72,51 @@ def cli():
     default='table',
     help='Output format (default: table)'
 )
-def games(league, season, week, format):
+@click.option(
+    '--refresh',
+    is_flag=True,
+    default=False,
+    help='Refresh games from source before displaying (requires --week)'
+)
+def games(league, season, week, format, refresh):
     """
     Query games from database.
     
     Examples:
         python scripts/query.py games --league NFL --season 2023 --week 1
         python scripts/query.py games --league NFL --season 2023 --format json
+        python scripts/query.py games --league NFL --season 2025 --week 16 --refresh
     """
     league = league.upper()
+    
+    # Handle refresh flag
+    if refresh:
+        if week is None:
+            click.echo("Error: --refresh requires --week to be specified", err=True)
+            sys.exit(1)
+        
+        if league != 'NFL':
+            click.echo(f"Error: --refresh is only supported for NFL", err=True)
+            sys.exit(1)
+        
+        try:
+            from src.data.nfl_ingestion import NFLDataIngester
+            
+            click.echo(f"Refreshing games for {league} season {season} week {week}...")
+            db = get_db_connection()
+            ingester = NFLDataIngester(db)
+            
+            # Fetch and ingest games (include_future=True to get all games in the week)
+            games_df = ingester.fetch_games(season, week, include_future=True)
+            if not games_df.empty:
+                ingester.ingest_games(games_df)
+                click.echo(f"Refreshed {len(games_df)} games.")
+            else:
+                click.echo("No games found to refresh.")
+        except Exception as e:
+            logger.error(f"Refresh failed: {e}", exc_info=True)
+            click.echo(f"Error during refresh: {e}", err=True)
+            sys.exit(1)
     
     try:
         db = get_db_connection()
@@ -137,9 +173,11 @@ def games(league, season, week, format):
                     home_name = team_cache.get(game.home_team_id, game.home_team_id)
                     away_name = team_cache.get(game.away_team_id, game.away_team_id)
                     
-                    score_str = ""
-                    if game.completed and game.home_score is not None:
+                    # Show score if both scores are present, otherwise show TBD
+                    if game.home_score is not None and game.away_score is not None:
                         score_str = f"{game.away_score}-{game.home_score}"
+                    else:
+                        score_str = "TBD"
                     
                     table_data.append([
                         game.week,
