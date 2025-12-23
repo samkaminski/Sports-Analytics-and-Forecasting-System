@@ -110,6 +110,30 @@ python scripts/query.py ratings --league NFL --season 2023 --team KC
 ```
 Computes Elo ratings from completed games and stores in team_ratings table. Query command displays ratings table or individual team details with ranking.
 
+### 6. Model Training
+
+- **Train Baseline Models**:
+  ```bash
+  python scripts/train.py --league NFL --start-season 2020 --end-season 2022
+  ```
+  *Trains three models (margin, total, win probability) on historical data and saves them to `models/{league}_{start}_{end}/`. Required before generating predictions.*
+
+### 7. Predictions
+
+- **Predict a Single Game**:
+  ```bash
+  python scripts/predict.py --league NFL --game-id NFL_2025_17_KC_DEN
+  ```
+  *Generates predictions for a specific game including spread, total points, favorite team, and win probabilities.*
+
+- **Predict a Full Week**:
+  ```bash
+  python scripts/predict.py --league NFL --season 2025 --week 17
+  ```
+  *Generates predictions for all upcoming games in a specific week. Shows spread, total, favorite, and win probabilities for each matchup.*
+
+**Note:** Models must be trained first using `scripts/train.py` before generating predictions.
+
 ## Notes
 
 - This is a personal analytics tool, not a commercial betting platform

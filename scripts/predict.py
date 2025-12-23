@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 """
 Prediction CLI Script
-Phase 1: Baseline Predictive Models
+Phase 1: Baseline Predictive Models (Task #7)
 
 USE: Command-line interface to generate and display game predictions
 WHAT WILL BE BUILT:
   - CLI script to generate predictions for upcoming games
-  - Options to predict specific weeks, dates, or all upcoming games
-  - Formatted terminal output (tables or detailed)
-  - Integration with trained models and database
+  - Options to predict specific games or full weeks
+  - Formatted terminal output with spread, total, favorite, probabilities
 
 HOW IT WORKS:
-  - Parses command-line arguments (league, week, date, etc.)
-  - Loads trained models from disk
-  - Queries database for games to predict
-  - Generates predictions using PredictionEngine
-  - Formats and displays output using TerminalFormatter
+  - Parses command-line arguments (league, game-id, season, week)
+  - Loads trained models from models/{league}_{start}_{end}/
+  - Queries database for upcoming games (completed=False, scores NULL)
+  - Computes features using prediction mode (as_of_date=today)
+  - Generates predictions and displays formatted output
 
 FITS IN PROJECT:
-  - Phase 1: Main user-facing interface for getting predictions
-  - Uses models trained by train.py
+  - Phase 1 Task #7: Main user-facing interface for getting predictions
+  - Uses models trained by train.py (Task #6)
   - Uses data ingested in Phase 0
-  - Outputs formatted predictions to terminal (no frontend yet)
 """
 
 import sys
@@ -29,15 +27,17 @@ import os
 import logging
 import click
 from pathlib import Path
-from datetime import datetime, date
+from datetime import date
+from sqlalchemy import select
+from typing import Dict
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data.database import get_db_connection
-from src.models.predict import PredictionEngine
-from src.output.terminal_formatter import TerminalFormatter
+from typing import Optional
+from src.data.database import get_db_connection, Game, Team
+from src.models.predict import load_models, predict_game
 
 # Configure logging
 logging.basicConfig(
@@ -47,18 +47,59 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@click.group()
-def cli():
-    """Sports Betting Analytics - Prediction CLI"""
-    pass
+def find_model_directory(league: str) -> Optional[str]:
+    """
+    Find the most recent model directory for a league.
+    
+    Args:
+        league: League name (e.g., 'NFL')
+    
+    Returns:
+        Path to model directory or None if not found
+    """
+    models_base = Path("models")
+    if not models_base.exists():
+        return None
+    
+    # Look for directories matching {league}_{start}_{end}
+    matching_dirs = []
+    for item in models_base.iterdir():
+        if item.is_dir() and item.name.startswith(f"{league}_"):
+            matching_dirs.append(item)
+    
+    if not matching_dirs:
+        return None
+    
+    # Return the most recent (by name, which includes season range)
+    # Sort by name descending to get latest seasons
+    matching_dirs.sort(key=lambda x: x.name, reverse=True)
+    return str(matching_dirs[0])
 
 
-@cli.command()
+def format_spread(pred: Dict, home_team_name: str, away_team_name: str) -> str:
+    """Format spread prediction as string."""
+    if pred['spread_team'] == 'home':
+        return f"{home_team_name} -{pred['spread_value']:.1f}"
+    else:
+        return f"{away_team_name} -{pred['spread_value']:.1f}"
+
+
+@click.command()
 @click.option(
     '--league',
-    type=click.Choice(['NFL', 'NCAA'], case_sensitive=False),
+    type=click.Choice(['NFL'], case_sensitive=False),
     required=True,
-    help='League to predict (NFL or NCAA)'
+    help='League to predict (currently only NFL supported)'
+)
+@click.option(
+    '--game-id',
+    type=str,
+    help='Game ID to predict (e.g., NFL_2025_17_KC_DEN)'
+)
+@click.option(
+    '--season',
+    type=int,
+    help='Season year (required for --week)'
 )
 @click.option(
     '--week',
@@ -66,145 +107,136 @@ def cli():
     help='Week number to predict (requires --season)'
 )
 @click.option(
-    '--season',
-    type=int,
-    help='Season year (defaults to current year)'
-)
-@click.option(
-    '--date',
-    type=click.DateTime(formats=['%Y-%m-%d']),
-    help='Date to predict games for (alternative to --week)'
-)
-@click.option(
-    '--upcoming',
-    is_flag=True,
-    help='Predict all upcoming games (not yet completed)'
-)
-@click.option(
-    '--detailed',
-    is_flag=True,
-    help='Show detailed predictions with key factors'
-)
-@click.option(
-    '--game-id',
+    '--model-dir',
     type=str,
-    help='Predict a specific game by ID'
+    help='Model directory path (auto-detected if not provided)'
 )
-def predict(league, week, season, date, upcoming, detailed, game_id):
+def predict(league, game_id, season, week, model_dir):
     """
-    Generate predictions for NFL or NCAA Football games.
+    Generate predictions for NFL games.
     
     Examples:
-        # Predict all upcoming games
-        python scripts/predict.py predict --league NFL --upcoming
+        # Predict a single game
+        python scripts/predict.py --league NFL --game-id NFL_2025_17_KC_DEN
         
-        # Predict a specific week
-        python scripts/predict.py predict --league NFL --week 12 --season 2024
-        
-        # Predict games on a specific date
-        python scripts/predict.py predict --league NFL --date 2024-11-24
-        
-        # Predict a specific game
-        python scripts/predict.py predict --league NFL --game-id NFL_2024_12_KC_BUF
+        # Predict a full week
+        python scripts/predict.py --league NFL --season 2025 --week 17
     """
     league = league.upper()
     
-    if season is None:
-        season = datetime.now().year
-    
     try:
+        # Find model directory
+        if model_dir is None:
+            model_dir = find_model_directory(league)
+            if model_dir is None:
+                click.echo(f"Error: No models found for {league}. Train models first using scripts/train.py", err=True)
+                sys.exit(1)
+        
+        if not os.path.exists(model_dir):
+            click.echo(f"Error: Model directory not found: {model_dir}", err=True)
+            sys.exit(1)
+        
+        click.echo(f"Loading models from: {model_dir}")
+        models_dict = load_models(model_dir)
+        
         # Initialize database connection
         db = get_db_connection()
         
-        # Initialize prediction engine
-        engine = PredictionEngine(db, league)
-        
-        # Initialize formatter
-        formatter = TerminalFormatter(db)
-        
-        predictions = []
-        
-        if game_id:
-            # Predict specific game
-            from src.data.database import Game
-            with db.get_session() as session:
-                game = session.query(Game).filter_by(game_id=game_id).first()
+        with db.get_session() as session:
+            as_of_date = date.today()
+            
+            if game_id:
+                # Predict single game
+                game = session.scalar(select(Game).where(Game.game_id == game_id))
                 if not game:
-                    click.echo(f"Game not found: {game_id}", err=True)
+                    click.echo(f"Error: Game not found: {game_id}", err=True)
                     sys.exit(1)
                 
-                pred = engine.predict_game(game)
-                pred['game_id'] = game.game_id
-                pred['home_team_id'] = game.home_team_id
-                pred['away_team_id'] = game.away_team_id
-                pred['date'] = game.date
-                predictions = [pred]
-        
-        elif upcoming:
-            # Predict all upcoming games
-            predictions = engine.predict_upcoming(season)
-        
-        elif week:
-            # Predict specific week
-            predictions = engine.predict_week(season, week)
-        
-        elif date:
-            # Predict games on specific date
-            from src.data.database import Game
-            with db.get_session() as session:
-                games = session.query(Game).filter(
-                    Game.league == league,
-                    Game.date == date.date(),
-                    Game.completed == False
-                ).all()
+                pred = predict_game(session, game, models_dict, as_of_date=as_of_date)
                 
+                # Get team names
+                home_team = session.scalar(select(Team).where(Team.team_id == game.home_team_id))
+                away_team = session.scalar(select(Team).where(Team.team_id == game.away_team_id))
+                home_name = home_team.name if home_team else game.home_team_id
+                away_name = away_team.name if away_team else game.away_team_id
+                
+                # Display prediction
+                click.echo("")
+                click.echo("=" * 70)
+                click.echo(f"Prediction: {away_name} @ {home_name}")
+                click.echo(f"Date: {game.date} | Week {game.week}, {game.season}")
+                click.echo("=" * 70)
+                click.echo("")
+                click.echo(f"Spread:     {format_spread(pred, home_name, away_name)}")
+                click.echo(f"Total:      {pred['predicted_total']:.1f}")
+                click.echo(f"Favorite:   {home_name if pred['favorite'] == game.home_team_id else away_name}")
+                click.echo("")
+                click.echo(f"Win Probabilities:")
+                click.echo(f"  {home_name}: {pred['p_home']:.1%}")
+                click.echo(f"  {away_name}: {pred['p_away']:.1%}")
+                click.echo("")
+                click.echo("=" * 70)
+                
+            elif season and week:
+                # Predict full week
+                stmt = select(Game).where(
+                    Game.league == league,
+                    Game.season == season,
+                    Game.week == week,
+                    Game.completed == False,
+                    Game.home_score.is_(None),
+                    Game.away_score.is_(None)
+                ).order_by(Game.date)
+                
+                games = list(session.scalars(stmt).all())
+                
+                if not games:
+                    click.echo(f"No upcoming games found for {league} Season {season} Week {week}")
+                    sys.exit(0)
+                
+                click.echo("")
+                click.echo("=" * 70)
+                click.echo(f"{league} Week {week}, {season} Predictions")
+                click.echo("=" * 70)
+                click.echo("")
+                
+                predictions = []
                 for game in games:
-                    pred = engine.predict_game(game)
-                    pred['game_id'] = game.game_id
-                    pred['home_team_id'] = game.home_team_id
-                    pred['away_team_id'] = game.away_team_id
-                    pred['date'] = game.date
-                    pred['week'] = game.week
-                    predictions.append(pred)
-        
-        else:
-            click.echo("Error: Must specify --week, --date, --upcoming, or --game-id", err=True)
-            sys.exit(1)
-        
-        if not predictions:
-            click.echo("No games found to predict.")
-            sys.exit(0)
-        
-        # Format and display output
-        if detailed or game_id:
-            # Detailed output for single game or detailed mode
-            for pred in predictions:
-                output = formatter.format_game_prediction(pred, include_factors=True)
-                click.echo(output)
-        else:
-            # Table output for multiple games
-            if week:
-                output = formatter.format_week_predictions(predictions, league, season, week)
+                    try:
+                        pred = predict_game(session, game, models_dict, as_of_date=as_of_date)
+                        predictions.append((game, pred))
+                    except Exception as e:
+                        logger.warning(f"Error predicting game {game.game_id}: {e}")
+                        continue
+                
+                # Display predictions in table format
+                for game, pred in predictions:
+                    home_team = session.scalar(select(Team).where(Team.team_id == game.home_team_id))
+                    away_team = session.scalar(select(Team).where(Team.team_id == game.away_team_id))
+                    home_name = home_team.name if home_team else game.home_team_id
+                    away_name = away_team.name if away_team else game.away_team_id
+                    
+                    matchup = f"{away_name} @ {home_name}"
+                    spread = format_spread(pred, home_name, away_name)
+                    favorite = home_name if pred['favorite'] == game.home_team_id else away_name
+                    
+                    click.echo(f"{matchup:40s} | Spread: {spread:20s} | Total: {pred['predicted_total']:5.1f} | Favorite: {favorite:20s} | P(home): {pred['p_home']:.1%} / P(away): {pred['p_away']:.1%}")
+                
+                click.echo("")
+                click.echo("=" * 70)
+                
             else:
-                # For upcoming or date-based, use first game's week or create summary
-                first_week = predictions[0].get('week', 1) if predictions else 1
-                output = formatter.format_week_predictions(predictions, league, season, first_week)
-            
-            click.echo(output)
+                click.echo("Error: Must specify either --game-id or both --season and --week", err=True)
+                sys.exit(1)
         
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Prediction failed: {e}", exc_info=True)
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
-@cli.command()
-def list_games():
-    """List upcoming games in database."""
-    click.echo("List games functionality - to be implemented")
-    # TODO: Implement game listing
-
-
 if __name__ == '__main__':
-    cli()
-
+    predict()
