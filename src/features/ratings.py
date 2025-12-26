@@ -39,7 +39,8 @@ def compute_elo_ratings(
     season: int,
     *,
     k_factor: float = 20.0,
-    base_rating: float = 1500.0
+    base_rating: float = 1500.0,
+    mean_reversion_factor: float = 0.33
 ) -> List[TeamRating]:
     """
     Compute Elo ratings for all teams in a league/season.
@@ -47,12 +48,18 @@ def compute_elo_ratings(
     Elo ratings measure team strength and update based on game results.
     Processes games chronologically to ensure no data leakage.
     
+    Implements season reset with mean reversion: each team's rating is
+    regressed toward the league mean (1500) by mean_reversion_factor (default 33%).
+    This prevents stale ratings from previous seasons and accounts for
+    offseason roster changes.
+    
     Args:
         session: Database session
         league: 'NFL' or 'NCAA'
         season: Season year
         k_factor: How much ratings change per game (default 20.0)
         base_rating: Starting Elo for all teams at season start (default 1500.0)
+        mean_reversion_factor: Fraction to regress toward mean (0.33 = 33% toward 1500)
     
     Returns:
         List of TeamRating objects (one per team) with final ratings
@@ -74,7 +81,8 @@ def compute_elo_ratings(
         logger.warning(f"No completed games found for {league} season {season}")
         return []
     
-    # Initialize all teams to base rating (season reset)
+    # Initialize ratings with mean reversion from previous season
+    # This ensures no data leakage: ratings start fresh each season
     ratings = {}  # team_id -> current rating
     team_games_count = {}  # team_id -> games played
     team_info = {}  # team_id -> (team_abbr, team_name)
@@ -84,6 +92,29 @@ def compute_elo_ratings(
     teams = session.scalars(team_stmt).all()
     for team in teams:
         team_info[team.team_id] = (team.abbreviation or team.team_id.replace(f"{league}_", ""), team.name)
+    
+    # Apply mean reversion: get previous season's final ratings and regress toward mean
+    # This prevents stale ratings and accounts for offseason changes
+    if season > 2000:  # Only if we have previous seasons
+        prev_season = season - 1
+        prev_ratings_stmt = select(TeamRating).where(
+            TeamRating.league == league,
+            TeamRating.season == prev_season
+        )
+        prev_ratings = {r.team_id: r.rating for r in session.scalars(prev_ratings_stmt).all()}
+        
+        for team_id in team_info.keys():
+            if team_id in prev_ratings:
+                # Mean reversion: new_rating = old_rating * (1 - factor) + base_rating * factor
+                prev_rating = prev_ratings[team_id]
+                ratings[team_id] = prev_rating * (1 - mean_reversion_factor) + base_rating * mean_reversion_factor
+            else:
+                # New team or no previous rating: start at base
+                ratings[team_id] = base_rating
+    else:
+        # First season or no previous data: all teams start at base rating
+        for team_id in team_info.keys():
+            ratings[team_id] = base_rating
     
     # Process games chronologically
     for game in games:
