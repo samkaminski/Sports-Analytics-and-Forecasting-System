@@ -125,8 +125,11 @@ def train(league, start_season, end_season, test_split):
         click.echo("Model Performance (Test Set):")
         click.echo(f"  Margin MAE:     {results['metrics']['margin_mae']:.2f} points")
         click.echo(f"  Total MAE:      {results['metrics']['total_mae']:.2f} points")
-        click.echo(f"  Win Accuracy:   {results['metrics']['win_accuracy']:.2%}")
+        if 'win_accuracy' in results['metrics']:
+            click.echo(f"  Win Accuracy:   {results['metrics']['win_accuracy']:.2%}")
         click.echo(f"  Win Log Loss:    {results['metrics']['win_log_loss']:.4f}")
+        if 'win_brier_score' in results['metrics']:
+            click.echo(f"  Win Brier Score: {results['metrics']['win_brier_score']:.4f}")
         click.echo("")
         click.echo(f"Training samples: {results['train_size']}")
         click.echo(f"Test samples:     {results['test_size']}")

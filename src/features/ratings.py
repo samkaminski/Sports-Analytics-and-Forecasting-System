@@ -33,6 +33,32 @@ from ..data.database import TeamRating, Game, Team
 logger = logging.getLogger(__name__)
 
 
+def normalize_team_id(team_id: str, league: str) -> str:
+    """
+    Normalize team ID to canonical format.
+    
+    Handles both 'NFL_KC' and 'KC' formats, converting to 'KC' (without prefix).
+    This ensures consistent dict key lookups regardless of how team IDs are stored.
+    
+    Args:
+        team_id: Team ID in any format (e.g., 'NFL_KC', 'KC')
+        league: League name (e.g., 'NFL')
+    
+    Returns:
+        Normalized team ID without league prefix (e.g., 'KC')
+    """
+    if not team_id:
+        return team_id
+    
+    # Remove league prefix if present (e.g., 'NFL_KC' -> 'KC')
+    prefix = f"{league}_"
+    if team_id.startswith(prefix):
+        return team_id[len(prefix):]
+    
+    # Already normalized (no prefix)
+    return team_id
+
+
 def compute_elo_ratings(
     session: Session,
     league: str,
@@ -88,10 +114,15 @@ def compute_elo_ratings(
     team_info = {}  # team_id -> (team_abbr, team_name)
     
     # Get team info from database
+    # Normalize team IDs to canonical format (without league prefix) for consistent dict keys
     team_stmt = select(Team).where(Team.league == league)
     teams = session.scalars(team_stmt).all()
     for team in teams:
-        team_info[team.team_id] = (team.abbreviation or team.team_id.replace(f"{league}_", ""), team.name)
+        normalized_id = normalize_team_id(team.team_id, league)
+        if normalized_id:
+            team_info[normalized_id] = (team.abbreviation or normalized_id, team.name)
+        else:
+            logger.warning(f"Could not normalize team_id '{team.team_id}' for league {league}, skipping")
     
     # Apply mean reversion: get previous season's final ratings and regress toward mean
     # This prevents stale ratings and accounts for offseason changes
@@ -101,7 +132,12 @@ def compute_elo_ratings(
             TeamRating.league == league,
             TeamRating.season == prev_season
         )
-        prev_ratings = {r.team_id: r.rating for r in session.scalars(prev_ratings_stmt).all()}
+        # Normalize previous season team IDs for consistent lookup
+        prev_ratings = {
+            normalize_team_id(r.team_id, league): r.rating 
+            for r in session.scalars(prev_ratings_stmt).all()
+            if normalize_team_id(r.team_id, league)
+        }
         
         for team_id in team_info.keys():
             if team_id in prev_ratings:
@@ -111,15 +147,25 @@ def compute_elo_ratings(
             else:
                 # New team or no previous rating: start at base
                 ratings[team_id] = base_rating
+            # Initialize games count for all teams
+            team_games_count[team_id] = 0
     else:
         # First season or no previous data: all teams start at base rating
         for team_id in team_info.keys():
             ratings[team_id] = base_rating
+            team_games_count[team_id] = 0
     
     # Process games chronologically
     for game in games:
-        home_team_id = game.home_team_id
-        away_team_id = game.away_team_id
+        # Normalize team IDs from games table to match dict keys
+        home_team_id = normalize_team_id(game.home_team_id, league)
+        away_team_id = normalize_team_id(game.away_team_id, league)
+        
+        # Skip if normalization failed
+        if not home_team_id or not away_team_id:
+            logger.warning(f"Could not normalize team IDs for game {game.game_id} "
+                         f"(home: {game.home_team_id}, away: {game.away_team_id}), skipping")
+            continue
         
         # Initialize teams if first time seeing them
         if home_team_id not in ratings:
@@ -159,17 +205,30 @@ def compute_elo_ratings(
         team_games_count[away_team_id] += 1
     
     # Create TeamRating objects for all teams
+    # Note: team_ratings table expects team_id in original format (with league prefix)
+    # So we need to convert back from normalized format for storage
     result = []
     as_of_date = date.today()
     
-    for team_id, rating in ratings.items():
-        team_abbr, team_name = team_info.get(team_id, (team_id.replace(f"{league}_", ""), None))
-        games_count = team_games_count.get(team_id, 0)
+    for normalized_id, rating in ratings.items():
+        team_abbr, team_name = team_info.get(normalized_id, (normalized_id, None))
+        games_count = team_games_count.get(normalized_id, 0)
+        
+        # Convert back to full format for storage (team_ratings table expects 'NFL_KC' format)
+        # Try to find original team_id from teams table, or reconstruct it
+        stored_team_id = f"{league}_{normalized_id}"  # Default: reconstruct with prefix
+        
+        # Try to find original format from teams table
+        team_stmt = select(Team).where(Team.league == league)
+        for team in session.scalars(team_stmt).all():
+            if normalize_team_id(team.team_id, league) == normalized_id:
+                stored_team_id = team.team_id
+                break
         
         team_rating = TeamRating(
             league=league,
             season=season,
-            team_id=team_id,
+            team_id=stored_team_id,  # Store in original format
             team_abbr=team_abbr,
             team_name=team_name,
             rating=rating,

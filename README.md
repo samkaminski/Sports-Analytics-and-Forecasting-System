@@ -62,20 +62,21 @@ Creates all database tables (teams, games, team_stats, team_ratings). Run once b
 ### 3. Data Ingestion
 
 ```bash
+# Ingest historical range with team stats (for training)
+python scripts/ingest_data.py ingest --league NFL --historical --start-season 2020 --end-season 2024 --stats
+
 # Ingest single season (all weeks)
 python scripts/ingest_data.py ingest --league NFL --season 2023
 
 # Ingest single season with team stats
 python scripts/ingest_data.py ingest --league NFL --season 2023 --stats
 
-# Ingest specific week
-python scripts/ingest_data.py ingest --league NFL --season 2023 --week 1
-
-# Ingest historical range with stats
-python scripts/ingest_data.py ingest --league NFL --historical --start-season 2020 --end-season 2023 --stats
-
 # Ingest current/in-progress season (ignores future games)
 python scripts/ingest_data.py ingest --league NFL --season 2025 --stats
+
+# Ingest specific week
+python scripts/ingest_data.py ingest --league NFL --season 2023 --week 1
+python scripts/ingest_data.py ingest --league NFL --season 2025 --week 17
 ```
 Ingests NFL game data from nfl-data-py. `--stats` computes team statistics from completed games. Historical ingestion processes multiple seasons. In-progress seasons automatically exclude games after today.
 
@@ -99,27 +100,34 @@ Starts the FastAPI server on port 8000. Health endpoint verifies server status. 
 ### 5. Ratings
 
 ```bash
-# Compute Elo ratings for a season
+# Compute Elo ratings for training seasons (required before training)
+python scripts/compute_ratings.py --league NFL --season 2020
+python scripts/compute_ratings.py --league NFL --season 2021
+python scripts/compute_ratings.py --league NFL --season 2022
 python scripts/compute_ratings.py --league NFL --season 2023
+python scripts/compute_ratings.py --league NFL --season 2024
+
+# Compute Elo ratings for prediction season (if predicting current season)
+python scripts/compute_ratings.py --league NFL --season 2025
 
 # Query all team ratings (top 10)
-python scripts/query.py ratings --league NFL --season 2023
+python scripts/query.py ratings --league NFL --season 2024
 
 # Query specific team rating
-python scripts/query.py ratings --league NFL --season 2023 --team KC
+python scripts/query.py ratings --league NFL --season 2024 --team KC
 ```
-Computes Elo ratings from completed games and stores in team_ratings table. Query command displays ratings table or individual team details with ranking.
+Computes Elo ratings from completed games and stores in team_ratings table. Must be run for each season before training models or predicting. Query command displays ratings table or individual team details with ranking.
 
 ### 6. Model Training
 
 ```bash
-# Train models with walk-forward validation
-python scripts/train.py --league NFL --start-season 2020 --end-season 2022
+# Train models with walk-forward validation (default, recommended)
+python scripts/train.py --league NFL --start-season 2020 --end-season 2024
 
 # Train with custom test split (single split, not walk-forward)
-python scripts/train.py --league NFL --start-season 2020 --end-season 2022 --test-split 0.2
+python scripts/train.py --league NFL --start-season 2020 --end-season 2024 --test-split 0.2
 ```
-Trains three models (margin, total, win probability) using walk-forward validation by default. Models include calibrated probabilities and prediction intervals. Saves to `models/{league}_{start}_{end}/`.
+Trains three models (margin, total, win probability) using walk-forward validation by default. Walk-forward validation automatically trains on past seasons and tests on future seasons. Models include calibrated probabilities and prediction intervals. Saves to `models/{league}_{start}_{end}/`.
 
 ### 7. Predictions
 
@@ -130,7 +138,13 @@ python scripts/predict.py --league NFL --game-id NFL_2025_17_KC_DEN
 # Predict a full week
 python scripts/predict.py --league NFL --season 2025 --week 17
 ```
-Generates predictions with calibrated win probabilities and prediction intervals for margin and total. Models must be trained first.
+Generates predictions with calibrated win probabilities and prediction intervals for margin and total. Predict script automatically loads the most recent model directory (e.g., `models/NFL_2020_2024/`). Models must be trained first. If a week returns "No upcoming games found", the schedule may not be available in the data source yet.
+
+## Troubleshooting
+
+- **Week 18 "No upcoming games found"**: The schedule may not be available in the data source yet. Try running `python scripts/ingest_data.py ingest --league NFL --season 2025 --week 18` to check if games exist.
+- **Elo computation required**: You must run `compute_ratings.py` for each season before training models or making predictions for that season.
+- **Model folder selection**: The predict script automatically selects the most recent model directory. If you trained on 2020-2024, it will use `models/NFL_2020_2024/`.
 
 ## Notes
 
